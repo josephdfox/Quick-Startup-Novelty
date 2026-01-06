@@ -1,10 +1,11 @@
 
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Navbar from './components/Navbar';
 import SimilarityMap from './components/SimilarityMap';
 import { AnalysisResult, ScatterPoint } from './types';
 import { toPng } from 'html-to-image';
-// Import the Gemini assessment service
+// Import the Gemini service for professional assessment
 import { getDetailedAssessment } from './services/geminiService';
 
 // Database item structure
@@ -63,12 +64,12 @@ const App: React.FC = () => {
       setStatusMessage('Loading Semantic Model...');
       const { pipeline, env } = await import('@xenova/transformers');
       
-      // Explicit browser config
-      // FIX: Removed non-existent remotePathComponent and corrected to remoteModelPath
+      // Browser-friendly config
       env.allowLocalModels = false;
       env.useBrowserCache = true;
       env.remoteHost = 'https://huggingface.co';
-      env.remoteModelPath = 'models';
+      // Fix: remove remoteModelPath from env as it's not a valid property in @xenova/transformers
+      // env.remoteModelPath = 'models';
 
       extractorRef.current = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
         progress_callback: (data: any) => {
@@ -94,12 +95,16 @@ const App: React.FC = () => {
 
       for (let i = 0; i < rows.length; i++) {
         const text = rows[i].replace(/^"|"$/g, '').trim();
-        const output = await extractorRef.current(text, { pooling: 'mean', normalize: true });
-        const vector = output.data as Float32Array;
-        const pos = getPositionFromVector(vector);
-        
-        indexedItems.push({ pitch: text, embedding: vector, ...pos });
-        points.push({ id: `item-${i}`, ...pos, isUser: false });
+        try {
+          const output = await extractorRef.current(text, { pooling: 'mean', normalize: true });
+          const vector = output.data as Float32Array;
+          const pos = getPositionFromVector(vector);
+          
+          indexedItems.push({ pitch: text, embedding: vector, ...pos });
+          points.push({ id: `item-${i}`, ...pos, isUser: false });
+        } catch (e) {
+          console.warn(`Skipping item ${i} due to extraction error`);
+        }
         
         if (i % 2 === 0 || i === rows.length - 1) {
            setStatusMessage(`Indexing: ${Math.round(((i + 1) / rows.length) * 100)}%`);
@@ -145,16 +150,16 @@ const App: React.FC = () => {
       // Calculate base novelty score (1-10)
       const novelty = Math.max(1, Math.min(10, Math.round((1 - maxSim) * 10)));
       
-      // Use Gemini to generate a professional semantic assessment instead of hardcoded rules
-      const { title, description } = await getDetailedAssessment(pitch, maxSim);
+      // Fix: Use the Gemini-powered detailed assessment for more professional insights
+      const assessment = await getDetailedAssessment(pitch, maxSim);
 
       setResult({
         x: userPos.x,
         y: userPos.y,
         noveltyScore: novelty,
         localSimilarityScore: maxSim,
-        assessmentTitle: title,
-        assessmentDescription: description
+        assessmentTitle: assessment.title,
+        assessmentDescription: assessment.description
       });
     } catch (error) {
       console.error("Analysis failed:", error);

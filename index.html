@@ -95,7 +95,11 @@
     import { Buffer } from 'buffer';
     import process from 'process';
     window.Buffer = Buffer;
-    window.process = { ...process, env: { NODE_ENV: 'production' }, nextTick: (cb) => setTimeout(cb, 0) };
+    window.process = { 
+      ...process, 
+      env: { NODE_ENV: 'production' }, 
+      nextTick: (cb) => setTimeout(cb, 0) 
+    };
 </script>
 </head>
 <body class="bg-background-dark text-slate-100 font-display transition-colors duration-200">
