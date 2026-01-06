@@ -56,7 +56,12 @@ const App: React.FC = () => {
     try {
       // 1. Load Model
       setStatusMessage('Loading Semantic Model (25MB)...');
-      const { pipeline } = await import('@xenova/transformers');
+      const { pipeline, env } = await import('@xenova/transformers');
+      
+      // Configure environment for browser
+      env.allowLocalModels = false;
+      env.useBrowserCache = true;
+
       extractorRef.current = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
         progress_callback: (data: any) => {
           if (data.status === 'progress') setModelProgress(data.progress);
@@ -65,12 +70,11 @@ const App: React.FC = () => {
       setModelProgress(100);
 
       // 2. Fetch "Hidden" CSV
-      // Tip: Name this file something like 'db_cache_01.csv' in your actual repo
       setStatusMessage('Fetching Idea Database...');
       const response = await fetch('./data.csv');
+      if (!response.ok) throw new Error('Could not load data.csv');
       const csvText = await response.text();
       
-      // Simple CSV Parse (Assumes first row is header 'pitch')
       const rows = csvText.split('\n').slice(1).filter(r => r.trim().length > 5);
       
       // 3. Index Database
@@ -87,7 +91,6 @@ const App: React.FC = () => {
         indexedItems.push({ pitch: text, embedding: vector, ...pos });
         points.push({ id: `item-${i}`, ...pos, isUser: false });
         
-        // Progress update every few items
         if (i % 5 === 0) setStatusMessage(`Indexing: ${Math.round((i/rows.length)*100)}%`);
       }
 
@@ -97,7 +100,7 @@ const App: React.FC = () => {
       setStatusMessage('System Ready');
     } catch (err) {
       console.error('Initialization failed:', err);
-      setStatusMessage('Error: Failed to load local database.');
+      setStatusMessage(`Error: ${err instanceof Error ? err.message : 'System Failure'}`);
     }
   }, []);
 
@@ -115,12 +118,10 @@ const App: React.FC = () => {
     setResult(null);
 
     try {
-      // Generate user embedding
       const output = await extractorRef.current(pitch, { pooling: 'mean', normalize: true });
       const userVector = output.data as Float32Array;
       const userPos = getPositionFromVector(userVector);
 
-      // Find highest similarity against the database
       let maxSim = 0;
       databaseRef.current.forEach(item => {
         if (item.embedding) {
@@ -129,7 +130,6 @@ const App: React.FC = () => {
         }
       });
 
-      // Interpretation
       const novelty = Math.round((1 - maxSim) * 10);
       let title = "Moderate Novelty";
       let desc = "Your pitch shows some unique angles but overlaps with established semantic patterns in our database.";
@@ -224,7 +224,6 @@ const App: React.FC = () => {
           </section>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            {/* Input */}
             <div className="lg:col-span-4 flex flex-col gap-6 p-6 rounded-2xl bg-surface-dark border border-border-dark shadow-xl">
                <div className="flex flex-col gap-1">
                   <h3 className="text-white font-bold text-lg">Your Idea</h3>
@@ -258,7 +257,6 @@ const App: React.FC = () => {
                 </div>
             </div>
 
-            {/* Viz */}
             <div className="lg:col-span-8 flex flex-col gap-6">
               <div className="relative group">
                 {isAnalyzing && <div className="scanning-line"></div>}
