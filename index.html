@@ -13,15 +13,13 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet" />
 
-    <!-- Material Symbols (optional, can remove if not used) -->
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
-
-    <!-- Import map for ESM dependencies -->
+    <!-- Import map to support "react-dom/client" bare specifier -->
     <script type="importmap">
     {
       "imports": {
         "react": "https://esm.sh/react@18.2.0",
         "react-dom": "https://esm.sh/react-dom@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
         "recharts": "https://esm.sh/recharts@2.12.7?external=react,react-dom",
         "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"
       }
@@ -56,13 +54,13 @@
 <body>
     <div id="root"></div>
 
-    <!-- JSX → JS transpilation on-the-fly -->
+    <!-- Babel for JSX transpilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Main app (type="text/babel" for JSX support) -->
+    <!-- Main app -->
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect, useRef } from 'react';
-        import ReactDOM from 'react-dom/client';
+        import { createRoot } from 'react-dom/client';
         import {
             ResponsiveContainer,
             ScatterChart,
@@ -75,7 +73,6 @@
         } from 'recharts';
         import { pipeline, env } from '@xenova/transformers';
 
-        // Sample startup ideas for the "market registry"
         const REGISTRY_DATA = [
             "Uber for dog walking in urban areas",
             "Airbnb for high-end photography studios",
@@ -98,12 +95,11 @@
             const [result, setResult] = useState(null);
 
             const extractorRef = useRef(null);
-            const databaseRef = useRef([]);
 
             useEffect(() => {
                 async function init() {
                     try {
-                        env.allowLocalModels = false; // Run in browser only
+                        env.allowLocalModels = false;
 
                         const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
                         extractorRef.current = extractor;
@@ -113,11 +109,11 @@
                             const out = await extractor(text, { pooling: 'mean', normalize: true });
                             const vec = Array.from(out.data);
 
-                            // Simple 2D projection for visualization
-                            const x = vec.slice(0, 192).reduce((a, b) => a + b, 0) * 10;
-                            const y = vec.slice(192).reduce((a, b) => a + b, 0) * 10;
+                            // Simple 2D projection: split embedding in half and sum each half
+                            const half = vec.length / 2;
+                            const x = vec.slice(0, half).reduce((a, b) => a + b, 0) * 15;
+                            const y = vec.slice(half).reduce((a, b) => a + b, 0) * 15;
 
-                            databaseRef.current.push({ text, vec });
                             initialPoints.push({ x, y, name: 'Market Pattern', isUser: false });
                         }
 
@@ -144,14 +140,15 @@
                     const out = await extractorRef.current(pitch, { pooling: 'mean', normalize: true });
                     const userVec = Array.from(out.data);
 
-                    const userX = userVec.slice(0, 192).reduce((a, b) => a + b, 0) * 10;
-                    const userY = userVec.slice(192).reduce((a, b) => a + b, 0) * 10;
+                    const half = userVec.length / 2;
+                    const userX = userVec.slice(0, half).reduce((a, b) => a + b, 0) * 15;
+                    const userY = userVec.slice(half).reduce((a, b) => a + b, 0) * 15;
 
                     const userPoint = { x: userX, y: userY, name: 'Your Idea', isUser: true };
 
                     setPoints(prev => [...prev.filter(p => !p.isUser), userPoint]);
 
-                    // Placeholder novelty score (real one would compare distances)
+                    // Placeholder novelty score
                     const score = Math.floor(Math.random() * 4) + 6;
                     const title = score >= 8 ? 'Pioneering Innovation' : 'Strategic Entry';
 
@@ -253,7 +250,8 @@
             );
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
+        const container = document.getElementById('root');
+        const root = createRoot(container);
         root.render(<App />);
     </script>
 </body>
