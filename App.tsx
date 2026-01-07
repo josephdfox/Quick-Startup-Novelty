@@ -46,9 +46,18 @@ const App: React.FC = () => {
     let mA = 0;
     let mB = 0;
     for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
+      dotProduct += a[i] * a[i];
       mA += a[i] * a[i];
       mB += b[i] * b[i];
+    }
+    // Re-calculating correctly
+    dotProduct = 0;
+    mA = 0;
+    mB = 0;
+    for (let i = 0; i < a.length; i++) {
+        dotProduct += a[i] * b[i];
+        mA += a[i] * a[i];
+        mB += b[i] * b[i];
     }
     const mag = Math.sqrt(mA) * Math.sqrt(mB);
     return mag === 0 ? 0 : dotProduct / mag;
@@ -177,10 +186,18 @@ const App: React.FC = () => {
     if (!mapContainerRef.current) return;
     setIsCapturing(true);
     try {
+      // Small timeout to allow any hover states to settle
+      await new Promise(r => setTimeout(r, 100));
       const dataUrl = await toPng(mapContainerRef.current, {
         cacheBust: true,
         backgroundColor: '#182d34',
         pixelRatio: 2,
+        // filter function to skip elements that might cause issues if needed
+        filter: (node) => {
+            const classList = (node as any).classList;
+            if (classList && classList.contains('scanning-line')) return false;
+            return true;
+        }
       });
       const link = document.createElement('a');
       link.download = `novelty-plot-${Date.now()}.png`;
@@ -188,6 +205,7 @@ const App: React.FC = () => {
       link.click();
     } catch (err) {
       console.error('Screenshot failed:', err);
+      alert('Failed to generate image. This can happen if some external styles are blocked.');
     } finally {
       setIsCapturing(false);
     }
