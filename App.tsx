@@ -13,7 +13,7 @@ interface DBItem {
   y?: number;
 }
 
-// Inlined CSV data to prevent fetch errors on GitHub Pages subdirectories
+// Inlined CSV data to ensure static hosting works without extra fetch requests
 const REGISTRY_CSV = `pitch
 Uber for dog walking in urban areas
 Airbnb for high-end photography studios
@@ -46,15 +46,6 @@ const App: React.FC = () => {
     let mA = 0;
     let mB = 0;
     for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * a[i];
-      mA += a[i] * a[i];
-      mB += b[i] * b[i];
-    }
-    // Re-calculating correctly
-    dotProduct = 0;
-    mA = 0;
-    mB = 0;
-    for (let i = 0; i < a.length; i++) {
         dotProduct += a[i] * b[i];
         mA += a[i] * a[i];
         mB += b[i] * b[i];
@@ -70,6 +61,7 @@ const App: React.FC = () => {
     for (let i = 0; i < half; i++) xSum += vector[i];
     for (let i = half; i < vector.length; i++) ySum += vector[i];
     
+    // Scale for visualization domain
     return {
       x: Math.max(-100, Math.min(100, (xSum / half) * 400)),
       y: Math.max(-100, Math.min(100, (ySum / half) * 400))
@@ -78,7 +70,6 @@ const App: React.FC = () => {
 
   const loadAndIndexData = useCallback(async () => {
     try {
-      // 1. Load Model
       setStatusMessage('Loading Semantic Model...');
       const { pipeline, env } = await import('@xenova/transformers');
       
@@ -93,7 +84,6 @@ const App: React.FC = () => {
       });
       setModelProgress(100);
 
-      // 2. Index Database from inlined string
       setStatusMessage(`Indexing Registry...`);
       const rows = REGISTRY_CSV.split('\n').slice(1).filter(r => r.trim().length > 5);
       const indexedItems: DBItem[] = [];
@@ -123,7 +113,7 @@ const App: React.FC = () => {
       setStatusMessage('System Ready');
     } catch (err) {
       console.error('Initialization failed:', err);
-      setStatusMessage(`Error: ${err instanceof Error ? err.message : 'Environment Setup Failed'}`);
+      setStatusMessage(`Error: ${err instanceof Error ? err.message : 'Setup Failed'}`);
     }
   }, []);
 
@@ -133,7 +123,7 @@ const App: React.FC = () => {
 
   const handleAnalyze = async () => {
     if (!pitch || pitch.length < 15) {
-      alert("Please provide a more descriptive pitch (min 15 chars).");
+      alert("Please provide a more descriptive pitch.");
       return;
     }
     
@@ -155,15 +145,15 @@ const App: React.FC = () => {
 
       const novelty = Math.max(1, Math.min(10, Math.round((1 - maxSim) * 10)));
       
-      let title = "Moderate Novelty";
-      let desc = "Your pitch shows some unique angles but overlaps with established semantic patterns.";
+      let title = "Standard Market Entry";
+      let desc = "Your pitch aligns with established semantic patterns. While this validates demand, differentiation is key.";
 
-      if (maxSim > 0.8) {
-        title = "Highly Saturated";
-        desc = "Extremely high similarity detected. This concept is very similar to existing market models.";
-      } else if (maxSim < 0.4) {
-        title = "High Innovation Area";
-        desc = "Your idea is semantically distinct from our registry, suggesting a strong unique value prop.";
+      if (maxSim < 0.4) {
+        title = "Pioneering Innovation";
+        desc = "Your concept is semantically distinct from known patterns, indicating a potential white-space opportunity.";
+      } else if (maxSim < 0.7) {
+        title = "Strategic Differentiation";
+        desc = "You are operating in a known category but introducing unique thematic elements.";
       }
 
       setResult({
@@ -176,7 +166,7 @@ const App: React.FC = () => {
       });
     } catch (error) {
       console.error("Analysis failed:", error);
-      alert("Analysis error.");
+      alert("Analysis failed.");
     } finally {
       setIsAnalyzing(false);
     }
@@ -186,17 +176,13 @@ const App: React.FC = () => {
     if (!mapContainerRef.current) return;
     setIsCapturing(true);
     try {
-      // Small timeout to allow any hover states to settle
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 150));
       const dataUrl = await toPng(mapContainerRef.current, {
         cacheBust: true,
         backgroundColor: '#182d34',
         pixelRatio: 2,
-        // filter function to skip elements that might cause issues if needed
-        filter: (node) => {
-            const classList = (node as any).classList;
-            if (classList && classList.contains('scanning-line')) return false;
-            return true;
+        style: {
+           borderRadius: '0px'
         }
       });
       const link = document.createElement('a');
@@ -205,7 +191,7 @@ const App: React.FC = () => {
       link.click();
     } catch (err) {
       console.error('Screenshot failed:', err);
-      alert('Failed to generate image. This can happen if some external styles are blocked.');
+      alert('Could not export image. Try taking a manual screenshot.');
     } finally {
       setIsCapturing(false);
     }
@@ -230,7 +216,7 @@ const App: React.FC = () => {
             </div>
             <div className="space-y-3">
               <h2 className="text-3xl font-black text-white tracking-tight">{statusMessage}</h2>
-              <p className="text-text-dim text-sm leading-relaxed">Preparing local vector engine. All processing happens in your browser.</p>
+              <p className="text-text-dim text-sm leading-relaxed">Initializing local AI engine. Your data never leaves this device.</p>
             </div>
             <div className="w-full h-1.5 bg-surface-dark rounded-full overflow-hidden border border-border-dark">
                <div className="h-full bg-primary transition-all duration-300 shadow-[0_0_10px_#0db9f2]" style={{ width: `${modelProgress}%` }} />
@@ -247,17 +233,22 @@ const App: React.FC = () => {
               Novelty <span className="text-primary italic">Index</span>.
             </h1>
             <p className="text-text-dim text-xl max-w-3xl">
-              Compare your vision against <span className="text-white font-medium">{corpusPoints.length} existing market patterns</span>.
+              Mapping your vision against <span className="text-white font-medium">{corpusPoints.length} existing market patterns</span>.
             </p>
           </section>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             <div className="lg:col-span-4 flex flex-col gap-6 p-8 rounded-[2rem] bg-surface-dark border border-border-dark shadow-2xl relative">
+               <div className="flex flex-col gap-2">
+                  <h3 className="text-white font-black text-xl tracking-tight">Pitch Descriptor</h3>
+                  <p className="text-text-dim text-xs font-medium">Describe your startup in 1-2 sentences.</p>
+               </div>
+               
                <textarea 
                   value={pitch}
                   onChange={(e) => setPitch(e.target.value)}
                   className="form-input w-full resize-none rounded-2xl text-white placeholder:text-text-dim/20 bg-background-dark/50 border border-border-dark focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all p-5 text-sm min-h-[200px]" 
-                  placeholder="Describe your startup idea here..."
+                  placeholder="Example: On-demand vertical farming kits for city apartments..."
                 />
 
                 <button 
@@ -265,7 +256,7 @@ const App: React.FC = () => {
                   disabled={isAnalyzing}
                   className="w-full flex items-center justify-center gap-3 rounded-2xl h-16 bg-primary hover:bg-white text-background-dark font-black text-lg transition-all shadow-xl shadow-primary/20 disabled:opacity-50"
                 >
-                  {isAnalyzing ? "Analyzing..." : "Compare Idea"}
+                  {isAnalyzing ? "Processing..." : "Run Analysis"}
                 </button>
             </div>
 
@@ -275,16 +266,15 @@ const App: React.FC = () => {
                 <SimilarityMap ref={mapContainerRef} userPoint={userPoint} corpusPoints={corpusPoints} />
                 
                 {result && !isAnalyzing && (
-                   <div className="absolute top-6 right-6 bg-background-dark/90 backdrop-blur-xl p-6 rounded-[1.5rem] border border-primary/20 shadow-2xl max-w-[280px]">
+                   <div className="absolute top-6 right-6 bg-background-dark/90 backdrop-blur-xl p-6 rounded-[1.5rem] border border-primary/20 shadow-2xl max-w-[280px] animate-in slide-in-from-right-4">
                       <h4 className="text-white text-lg font-black leading-tight mb-2 tracking-tight">{result.assessmentTitle}</h4>
-                      <p className="text-text-dim text-sm">{result.assessmentDescription}</p>
-                      <div className="mt-6 flex flex-col gap-2">
+                      <div className="mt-4 flex flex-col gap-2">
                         <div className="flex justify-between text-[10px] text-text-dim font-black uppercase tracking-wider">
                           <span>Novelty Score</span>
                           <span className="text-white">{result.noveltyScore} / 10</span>
                         </div>
                         <div className="w-full h-2 bg-border-dark rounded-full overflow-hidden">
-                          <div className="h-full bg-primary rounded-full" style={{ width: `${result.noveltyScore * 10}%` }}></div>
+                          <div className="h-full bg-primary rounded-full transition-all duration-1000" style={{ width: `${result.noveltyScore * 10}%` }}></div>
                         </div>
                       </div>
                    </div>
@@ -292,20 +282,27 @@ const App: React.FC = () => {
               </div>
 
               {result && (
-                <div className="p-8 rounded-[2rem] bg-surface-dark border border-border-dark flex flex-col gap-6 shadow-xl">
-                  <div className="flex flex-wrap gap-4">
+                <div className="p-8 rounded-[2rem] bg-surface-dark border border-border-dark flex flex-col gap-6 shadow-xl animate-in fade-in">
+                  <div className="flex flex-col gap-2">
+                    <h2 className="text-2xl font-black text-white tracking-tight">Market Positioning</h2>
+                    <p className="text-slate-300 text-lg leading-relaxed">
+                      {result.assessmentDescription}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-4 pt-4 border-t border-border-dark/50">
                     <button 
                       onClick={() => { setPitch(''); setResult(null); }} 
                       className="px-6 py-3 rounded-xl bg-background-dark border border-border-dark text-text-dim hover:text-white transition-all text-xs font-black uppercase tracking-widest"
                     >
-                      New Plot
+                      Clear All
                     </button>
                     <button 
                       onClick={saveScreenshot} 
                       disabled={isCapturing}
-                      className="px-6 py-3 rounded-xl bg-white text-background-dark hover:bg-primary transition-all text-xs font-black uppercase tracking-widest flex items-center gap-2"
+                      className="px-6 py-3 rounded-xl bg-white text-background-dark hover:bg-primary transition-all text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-lg"
                     >
-                      Export Results
+                      <span className="material-symbols-outlined text-sm">download</span>
+                      {isCapturing ? 'Processing...' : 'Export View'}
                     </button>
                   </div>
                 </div>
