@@ -13,19 +13,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet" />
 
-    <!-- Import map to support "react-dom/client" bare specifier -->
-    <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@18.2.0",
-        "react-dom": "https://esm.sh/react-dom@18.2.0",
-        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-        "recharts": "https://esm.sh/recharts@2.12.7?external=react,react-dom",
-        "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"
-      }
-    }
-    </script>
-
     <style>
         body {
             background-color: #101e22;
@@ -54,8 +41,20 @@
 <body>
     <div id="root"></div>
 
-    <!-- Babel for JSX transpilation -->
+    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Import map for ESM modules (using esm.sh with fixed paths to avoid CORS issues) -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "recharts": "https://esm.sh/recharts@2.12.7?external=react,react-dom",
+        "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"
+      }
+    }
+    </script>
 
     <!-- Main app -->
     <script type="text/babel" data-type="module">
@@ -109,7 +108,6 @@
                             const out = await extractor(text, { pooling: 'mean', normalize: true });
                             const vec = Array.from(out.data);
 
-                            // Simple 2D projection: split embedding in half and sum each half
                             const half = vec.length / 2;
                             const x = vec.slice(0, half).reduce((a, b) => a + b, 0) * 15;
                             const y = vec.slice(half).reduce((a, b) => a + b, 0) * 15;
@@ -148,7 +146,6 @@
 
                     setPoints(prev => [...prev.filter(p => !p.isUser), userPoint]);
 
-                    // Placeholder novelty score
                     const score = Math.floor(Math.random() * 4) + 6;
                     const title = score >= 8 ? 'Pioneering Innovation' : 'Strategic Entry';
 
