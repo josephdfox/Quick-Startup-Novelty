@@ -13,11 +13,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet" />
 
-    <!-- Chart.js CDN for scatter plot -->
+    <!-- Chart.js for scatter plot -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <!-- Transformers.js from reliable CDN -->
-    <script type="module" src="https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0"></script>
 
     <style>
         body {
@@ -38,6 +35,9 @@
         @keyframes scan-line {
             0% { top: -10%; }
             100% { top: 110%; }
+        }
+        .user-dot {
+            filter: drop-shadow(0 0 8px #0db9f2);
         }
     </style>
 </head>
@@ -99,7 +99,8 @@
     </div>
 
     <script type="module">
-        import { pipeline, env } from '@huggingface/transformers';
+        // Direct ESM import from jsDelivr CDN (no bare specifier issue)
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
 
         const REGISTRY_DATA = [
             "Uber for dog walking in urban areas",
@@ -130,7 +131,7 @@
             try {
                 env.allowLocalModels = false;
 
-                statusEl.textContent = 'Loading AI model... (this may take 10-30s)';
+                statusEl.textContent = 'Loading AI model... (first time: ~30-60s)';
                 extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
 
                 points = [];
@@ -142,7 +143,13 @@
                     const x = vec.slice(0, half).reduce((a, b) => a + b, 0) * 20;
                     const y = vec.slice(half).reduce((a, b) => a + b, 0) * 20;
 
-                    points.push({ x, y, size: 10, backgroundColor: '#223f49' });
+                    points.push({
+                        x,
+                        y,
+                        pointRadius: 8,
+                        pointBackgroundColor: '#223f49',
+                        pointHoverRadius: 12
+                    });
                 }
 
                 initChart();
@@ -157,14 +164,14 @@
             const ctx = document.getElementById('scatter-chart').getContext('2d');
             chart = new Chart(ctx, {
                 type: 'scatter',
-                data: { datasets: [{ data: points, pointRadius: 8, pointHoverRadius: 12 }] },
+                data: { datasets: [{ data: points }] },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: { legend: { display: false }, tooltip: { enabled: false } },
                     scales: {
-                        x: { display: false },
-                        y: { display: false }
+                        x: { display: false, grid: { display: false } },
+                        y: { display: false, grid: { display: false } }
                     }
                 }
             });
@@ -190,15 +197,24 @@
                 const userX = userVec.slice(0, half).reduce((a, b) => a + b, 0) * 20;
                 const userY = userVec.slice(half).reduce((a, b) => a + b, 0) * 20;
 
-                const userPoint = { x: userX, y: userY, size: 20, backgroundColor: '#0db9f2', borderColor: '#0db9f2', borderWidth: 4 };
+                const userPoint = {
+                    x: userX,
+                    y: userY,
+                    pointRadius: 20,
+                    pointBackgroundColor: '#0db9f2',
+                    pointBorderColor: '#0db9f2',
+                    pointBorderWidth: 4,
+                    pointHoverRadius: 24
+                };
 
-                // Remove previous user point if any
-                points = points.filter(p => p.backgroundColor !== '#0db9f2');
+                // Remove old user point
+                points = points.filter(p => p.pointBackgroundColor !== '#0db9f2');
                 points.push(userPoint);
 
                 chart.data.datasets[0].data = points;
                 chart.update();
 
+                // Placeholder score
                 const score = Math.floor(Math.random() * 4) + 6;
                 const title = score >= 8 ? 'Pioneering Innovation' : 'Strategic Entry';
 
