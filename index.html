@@ -5,13 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Startup Novelty Index</title>
 
-    <!-- Tailwind CSS via CDN -->
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet" />
+
+    <!-- Chart.js CDN for scatter plot -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Transformers.js from reliable CDN -->
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0"></script>
 
     <style>
         body {
@@ -33,44 +39,67 @@
             0% { top: -10%; }
             100% { top: 110%; }
         }
-        .user-dot {
-            filter: drop-shadow(0 0 8px #0db9f2);
-        }
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <div class="min-h-screen flex flex-col p-6 md:p-12">
+        <header class="max-w-6xl mx-auto w-full mb-12 flex justify-between items-center">
+            <h1 class="text-3xl font-black tracking-tighter text-white">
+                NOVELTY<span class="text-[#0db9f2]">.AI</span>
+            </h1>
+            <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500 bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">
+                Local Processing Enabled
+            </div>
+        </header>
 
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+        <main class="max-w-6xl mx-auto w-full grid lg:grid-cols-12 gap-12">
+            <div class="lg:col-span-5 space-y-8">
+                <div class="space-y-2">
+                    <h2 class="text-5xl font-black text-white leading-tight">Map your vision.</h2>
+                    <p class="text-slate-400">
+                        Our AI analyzes the semantic distance between your idea and existing market patterns.
+                    </p>
+                </div>
 
-    <!-- Import map for ESM modules (using esm.sh with fixed paths to avoid CORS issues) -->
-    <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@18.2.0",
-        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-        "recharts": "https://esm.sh/recharts@2.12.7?external=react,react-dom",
-        "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"
-      }
-    }
-    </script>
+                <div class="bg-slate-800/40 p-1 rounded-[2rem] border border-slate-700/50 shadow-2xl">
+                    <textarea id="pitch" class="w-full h-64 p-6 bg-transparent text-white placeholder:text-slate-600 outline-none resize-none text-lg"
+                        placeholder="Describe your startup in a few sentences..."></textarea>
+                    <button id="analyze-btn" class="w-full py-5 rounded-[1.8rem] bg-[#0db9f2] text-[#101e22] font-black text-xl hover:bg-white transition-all disabled:opacity-50">
+                        Run Analysis
+                    </button>
+                </div>
+            </div>
 
-    <!-- Main app -->
-    <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useRef } from 'react';
-        import { createRoot } from 'react-dom/client';
-        import {
-            ResponsiveContainer,
-            ScatterChart,
-            Scatter,
-            XAxis,
-            YAxis,
-            ZAxis,
-            Tooltip,
-            Cell
-        } from 'recharts';
-        import { pipeline, env } from '@xenova/transformers';
+            <div class="lg:col-span-7 flex flex-col gap-6">
+                <div class="relative">
+                    <div class="h-[500px] bg-[#182d34] rounded-[3rem] border border-slate-700 overflow-hidden shadow-inner">
+                        <canvas id="scatter-chart"></canvas>
+                        <div id="scanning-line" class="scanning-line hidden"></div>
+                    </div>
+                    <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-[#182d34]/80">
+                        <div class="size-12 border-4 border-[#0db9f2] border-t-transparent rounded-full animate-spin"></div>
+                        <p id="status" class="font-bold text-slate-400">Initializing AI Engine...</p>
+                    </div>
+                </div>
+
+                <div id="result" class="hidden p-8 bg-slate-800/50 border border-[#0db9f2]/30 rounded-[2rem]">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 id="result-title" class="text-2xl font-black text-white"></h3>
+                            <p class="text-slate-400 mt-1">Your idea occupies a unique niche in the vector space.</p>
+                        </div>
+                        <div class="text-right">
+                            <span id="result-score" class="text-4xl font-black text-[#0db9f2]"></span>
+                            <span class="text-slate-500 font-bold">/10</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script type="module">
+        import { pipeline, env } from '@huggingface/transformers';
 
         const REGISTRY_DATA = [
             "Uber for dog walking in urban areas",
@@ -85,171 +114,110 @@
             "Direct-to-consumer sustainable furniture brand"
         ];
 
-        const App = () => {
-            const [pitch, setPitch] = useState('');
-            const [isReady, setIsReady] = useState(false);
-            const [isAnalyzing, setIsAnalyzing] = useState(false);
-            const [status, setStatus] = useState('Initializing AI Engine...');
-            const [points, setPoints] = useState([]);
-            const [result, setResult] = useState(null);
+        let extractor = null;
+        let points = [];
+        let chart = null;
 
-            const extractorRef = useRef(null);
+        const statusEl = document.getElementById('status');
+        const loadingEl = document.getElementById('loading');
+        const scanningEl = document.getElementById('scanning-line');
+        const resultEl = document.getElementById('result');
+        const resultTitleEl = document.getElementById('result-title');
+        const resultScoreEl = document.getElementById('result-score');
+        const btn = document.getElementById('analyze-btn');
 
-            useEffect(() => {
-                async function init() {
-                    try {
-                        env.allowLocalModels = false;
+        async function init() {
+            try {
+                env.allowLocalModels = false;
 
-                        const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-                        extractorRef.current = extractor;
+                statusEl.textContent = 'Loading AI model... (this may take 10-30s)';
+                extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
 
-                        const initialPoints = [];
-                        for (const text of REGISTRY_DATA) {
-                            const out = await extractor(text, { pooling: 'mean', normalize: true });
-                            const vec = Array.from(out.data);
+                points = [];
+                for (const text of REGISTRY_DATA) {
+                    const out = await extractor(text, { pooling: 'mean', normalize: true });
+                    const vec = Array.from(out.data);
 
-                            const half = vec.length / 2;
-                            const x = vec.slice(0, half).reduce((a, b) => a + b, 0) * 15;
-                            const y = vec.slice(half).reduce((a, b) => a + b, 0) * 15;
+                    const half = vec.length / 2;
+                    const x = vec.slice(0, half).reduce((a, b) => a + b, 0) * 20;
+                    const y = vec.slice(half).reduce((a, b) => a + b, 0) * 20;
 
-                            initialPoints.push({ x, y, name: 'Market Pattern', isUser: false });
-                        }
+                    points.push({ x, y, size: 10, backgroundColor: '#223f49' });
+                }
 
-                        setPoints(initialPoints);
-                        setIsReady(true);
-                        setStatus('Ready');
-                    } catch (err) {
-                        setStatus('Error loading model');
-                        console.error(err);
+                initChart();
+                loadingEl.classList.add('hidden');
+            } catch (err) {
+                statusEl.textContent = 'Error loading model';
+                console.error(err);
+            }
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('scatter-chart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets: [{ data: points, pointRadius: 8, pointHoverRadius: 12 }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false }
                     }
                 }
-                init();
-            }, []);
+            });
+        }
 
-            const handleAnalyze = async () => {
-                if (pitch.length < 10) {
-                    alert('Please enter a longer pitch.');
-                    return;
-                }
-                setIsAnalyzing(true);
-                setResult(null);
+        async function analyze() {
+            const pitch = document.getElementById('pitch').value.trim();
+            if (pitch.length < 10) {
+                alert('Please enter a longer pitch.');
+                return;
+            }
 
-                try {
-                    const out = await extractorRef.current(pitch, { pooling: 'mean', normalize: true });
-                    const userVec = Array.from(out.data);
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+            scanningEl.classList.remove('hidden');
+            resultEl.classList.add('hidden');
 
-                    const half = userVec.length / 2;
-                    const userX = userVec.slice(0, half).reduce((a, b) => a + b, 0) * 15;
-                    const userY = userVec.slice(half).reduce((a, b) => a + b, 0) * 15;
+            try {
+                const out = await extractor(pitch, { pooling: 'mean', normalize: true });
+                const userVec = Array.from(out.data);
 
-                    const userPoint = { x: userX, y: userY, name: 'Your Idea', isUser: true };
+                const half = userVec.length / 2;
+                const userX = userVec.slice(0, half).reduce((a, b) => a + b, 0) * 20;
+                const userY = userVec.slice(half).reduce((a, b) => a + b, 0) * 20;
 
-                    setPoints(prev => [...prev.filter(p => !p.isUser), userPoint]);
+                const userPoint = { x: userX, y: userY, size: 20, backgroundColor: '#0db9f2', borderColor: '#0db9f2', borderWidth: 4 };
 
-                    const score = Math.floor(Math.random() * 4) + 6;
-                    const title = score >= 8 ? 'Pioneering Innovation' : 'Strategic Entry';
+                // Remove previous user point if any
+                points = points.filter(p => p.backgroundColor !== '#0db9f2');
+                points.push(userPoint);
 
-                    setResult({ title, score });
-                } catch (err) {
-                    alert('Analysis failed');
-                    console.error(err);
-                }
+                chart.data.datasets[0].data = points;
+                chart.update();
 
-                setIsAnalyzing(false);
-            };
+                const score = Math.floor(Math.random() * 4) + 6;
+                const title = score >= 8 ? 'Pioneering Innovation' : 'Strategic Entry';
 
-            return (
-                <div className="min-h-screen flex flex-col p-6 md:p-12">
-                    <header className="max-w-6xl mx-auto w-full mb-12 flex justify-between items-center">
-                        <h1 className="text-3xl font-black tracking-tighter text-white">
-                            NOVELTY<span className="text-[#0db9f2]">.AI</span>
-                        </h1>
-                        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">
-                            Local Processing Enabled
-                        </div>
-                    </header>
+                resultTitleEl.textContent = title;
+                resultScoreEl.textContent = score;
+                resultEl.classList.remove('hidden');
+            } catch (err) {
+                alert('Analysis failed');
+                console.error(err);
+            }
 
-                    {!isReady ? (
-                        <div className="flex-1 flex flex-col items-center justify-center space-y-4">
-                            <div className="size-12 border-4 border-[#0db9f2] border-t-transparent rounded-full animate-spin"></div>
-                            <p className="font-bold text-slate-400">{status}</p>
-                        </div>
-                    ) : (
-                        <main className="max-w-6xl mx-auto w-full grid lg:grid-cols-12 gap-12">
-                            <div className="lg:col-span-5 space-y-8">
-                                <div className="space-y-2">
-                                    <h2 className="text-5xl font-black text-white leading-tight">Map your vision.</h2>
-                                    <p className="text-slate-400">
-                                        Our AI analyzes the semantic distance between your idea and existing market patterns.
-                                    </p>
-                                </div>
+            btn.disabled = false;
+            btn.textContent = 'Run Analysis';
+            scanningEl.classList.add('hidden');
+        }
 
-                                <div className="bg-slate-800/40 p-1 rounded-[2rem] border border-slate-700/50 shadow-2xl">
-                                    <textarea
-                                        className="w-full h-64 p-6 bg-transparent text-white placeholder:text-slate-600 outline-none resize-none text-lg"
-                                        placeholder="Describe your startup in a few sentences..."
-                                        value={pitch}
-                                        onChange={e => setPitch(e.target.value)}
-                                    />
-                                    <button
-                                        onClick={handleAnalyze}
-                                        disabled={isAnalyzing}
-                                        className="w-full py-5 rounded-[1.8rem] bg-[#0db9f2] text-[#101e22] font-black text-xl hover:bg-white transition-all disabled:opacity-50"
-                                    >
-                                        {isAnalyzing ? 'Processing...' : 'Run Analysis'}
-                                    </button>
-                                </div>
-                            </div>
+        document.getElementById('analyze-btn').addEventListener('click', analyze);
 
-                            <div className="lg:col-span-7 flex flex-col gap-6">
-                                <div className="h-[500px] bg-[#182d34] rounded-[3rem] border border-slate-700 relative overflow-hidden shadow-inner">
-                                    {isAnalyzing && <div className="scanning-line"></div>}
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <ScatterChart margin={{ top: 60, right: 60, bottom: 60, left: 60 }}>
-                                            <XAxis type="number" dataKey="x" hide />
-                                            <YAxis type="number" dataKey="y" hide />
-                                            <ZAxis type="number" range={[100, 500]} />
-                                            <Tooltip
-                                                cursor={{ strokeDasharray: '3 3' }}
-                                                contentStyle={{ backgroundColor: '#101e22', border: '1px solid #223f49', borderRadius: '12px' }}
-                                            />
-                                            <Scatter name="Ideas" data={points}>
-                                                {points.map((entry, index) => (
-                                                    <Cell
-                                                        key={`cell-${index}`}
-                                                        fill={entry.isUser ? '#0db9f2' : '#223f49'}
-                                                        className={entry.isUser ? 'user-dot' : 'opacity-40'}
-                                                    />
-                                                ))}
-                                            </Scatter>
-                                        </ScatterChart>
-                                    </ResponsiveContainer>
-                                </div>
-
-                                {result && (
-                                    <div className="p-8 bg-slate-800/50 border border-[#0db9f2]/30 rounded-[2rem]">
-                                        <div className="flex justify-between items-start">
-                                            <div>
-                                                <h3 className="text-2xl font-black text-white">{result.title}</h3>
-                                                <p className="text-slate-400 mt-1">Your idea occupies a unique niche in the vector space.</p>
-                                            </div>
-                                            <div className="text-right">
-                                                <span className="text-4xl font-black text-[#0db9f2]">{result.score}</span>
-                                                <span className="text-slate-500 font-bold">/10</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </main>
-                    )}
-                </div>
-            );
-        };
-
-        const container = document.getElementById('root');
-        const root = createRoot(container);
-        root.render(<App />);
+        init();
     </script>
 </body>
 </html>
