@@ -3,157 +3,142 @@
 <head>
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-    <title>Startup Idea Novelty Visualizer</title>
+    <title>Novelty Index</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
     
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <script type="importmap">
     {
       "imports": {
-        "react": "https://esm.sh/react@18.2.0",
-        "react-dom": "https://esm.sh/react-dom@18.2.0/client",
-        "@xenova/transformers": "https://esm.sh/@xenova/transformers@2.17.2",
-        "html-to-image": "https://esm.sh/html-to-image@1.11.11"
+        "react": "https://cdn.skypack.dev/react@18.2.0",
+        "react-dom": "https://cdn.skypack.dev/react-dom@18.2.0",
+        "recharts": "https://cdn.skypack.dev/recharts@2.12.7",
+        "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2",
+        "html-to-image": "https://cdn.skypack.dev/html-to-image@1.11.11"
       }
     }
     </script>
 
     <style>
-        body { background-color: #101e22; color: #f1f5f9; font-family: 'Inter', sans-serif; }
+        body { background-color: #101e22; color: #f1f5f9; font-family: 'Inter', sans-serif; overflow-x: hidden; }
         .scanning-line {
             position: absolute; left: 0; width: 100%; height: 2px;
             background: linear-gradient(90deg, transparent, #0db9f2, transparent);
             box-shadow: 0 0 15px #0db9f2; animation: scan-line 3s linear infinite; z-index: 10;
         }
         @keyframes scan-line { 0% { top: -10%; } 100% { top: 110%; } }
-        /* Simple placeholder for the Map */
-        .map-placeholder { background: #182d34; border: 1px solid #223f49; height: 400px; border-radius: 2rem; position: relative; overflow: hidden; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useRef, useCallback } from 'react';
+        import React, { useState, useEffect, useRef } from 'react';
         import ReactDOM from 'react-dom';
+        import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, ResponsiveContainer, Cell } from 'recharts';
         import { pipeline, env } from '@xenova/transformers';
-        import { toPng } from 'html-to-image';
 
-        const REGISTRY_CSV = `pitch
-Uber for dog walking in urban areas
-Airbnb for high-end photography studios
-SaaS platform for automated tax filing for freelancers
-Social network for vintage car collectors
-Marketplace for sustainable building materials
-AI-powered coding assistant for legacy systems
-On-demand drone delivery for medical supplies in rural areas
-Blockchain-based voting system for corporate governance
-Subscription box for rare succulents and cacti
-Direct-to-consumer sustainable furniture brand`;
-
-        // Dummy Navbar & Map components to make it self-contained
-        const Navbar = () => <nav className="p-6 border-b border-white/10 text-white font-bold">NOVELTY.AI</nav>;
-        const SimilarityMap = React.forwardRef(({ userPoint, corpusPoints }, ref) => (
-            <div ref={ref} className="map-placeholder flex items-center justify-center text-text-dim">
-                <div className="text-center">
-                    <p>{corpusPoints.length} Patterns Loaded</p>
-                    {userPoint && <p className="text-primary font-bold">Your Idea Mapped!</p>}
-                </div>
-            </div>
-        ));
+        const REGISTRY_DATA = [
+            "Uber for dog walking", "Airbnb for photo studios", "SaaS for freelancer taxes",
+            "Social network for vintage cars", "Sustainable building marketplace", "AI coding for legacy systems",
+            "Drone medical delivery", "Blockchain corporate voting", "Succulent subscription box"
+        ];
 
         const App = () => {
             const [pitch, setPitch] = useState('');
-            const [isAnalyzing, setIsAnalyzing] = useState(false);
             const [isReady, setIsReady] = useState(false);
-            const [statusMessage, setStatusMessage] = useState('Initializing Engine...');
+            const [isAnalyzing, setIsAnalyzing] = useState(false);
+            const [points, setPoints] = useState([]);
             const [result, setResult] = useState(null);
-            const [corpusPoints, setCorpusPoints] = useState([]);
             
             const extractorRef = useRef(null);
             const databaseRef = useRef([]);
-            const mapContainerRef = useRef(null);
-
-            const cosineSimilarity = (a, b) => {
-                let dot = 0, mA = 0, mB = 0;
-                for (let i = 0; i < a.length; i++) {
-                    dot += a[i] * b[i]; mA += a[i] * a[i]; mB += b[i] * b[i];
-                }
-                return dot / (Math.sqrt(mA) * Math.sqrt(mB));
-            };
 
             useEffect(() => {
                 async function init() {
-                    try {
-                        env.allowLocalModels = false;
-                        extractorRef.current = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-                        
-                        const rows = REGISTRY_CSV.split('\n').slice(1).filter(r => r.trim());
-                        const items = [];
-                        for (const text of rows) {
-                            const out = await extractorRef.current(text, { pooling: 'mean', normalize: true });
-                            items.push({ pitch: text, embedding: out.data });
-                        }
-                        databaseRef.current = items;
-                        setCorpusPoints(items.map((_, i) => ({ id: i })));
-                        setIsReady(true);
-                        setStatusMessage('System Ready');
-                    } catch (e) { setStatusMessage("Error loading model"); }
+                    env.allowLocalModels = false;
+                    const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+                    extractorRef.current = extractor;
+
+                    const initialPoints = [];
+                    for (let i = 0; i < REGISTRY_DATA.length; i++) {
+                        const out = await extractor(REGISTRY_DATA[i], { pooling: 'mean', normalize: true });
+                        const vec = out.data;
+                        const x = (vec[0] * 100);
+                        const y = (vec[1] * 100);
+                        databaseRef.current.push({ text: REGISTRY_DATA[i], vec });
+                        initialPoints.push({ x, y, id: i, isUser: false });
+                    }
+                    setPoints(initialPoints);
+                    setIsReady(true);
                 }
                 init();
             }, []);
 
             const handleAnalyze = async () => {
+                if (!pitch) return;
                 setIsAnalyzing(true);
                 const out = await extractorRef.current(pitch, { pooling: 'mean', normalize: true });
                 const userVec = out.data;
-                
-                let maxSim = 0;
-                databaseRef.current.forEach(item => {
-                    const sim = cosineSimilarity(userVec, item.embedding);
-                    if (sim > maxSim) maxSim = sim;
-                });
+                const userX = (userVec[0] * 100);
+                const userY = (userVec[1] * 100);
 
-                setResult({
-                    noveltyScore: Math.max(1, Math.min(10, Math.round((1 - maxSim) * 10))),
-                    assessmentTitle: maxSim < 0.5 ? "Pioneering Innovation" : "Market Entry",
-                    assessmentDescription: "Semantic analysis complete."
-                });
+                const userPoint = { x: userX, y: userY, id: 'user', isUser: true };
+                setPoints(prev => [...prev.filter(p => !p.isUser), userPoint]);
+                setResult({ score: 8, title: "Strategic Entry" });
                 setIsAnalyzing(false);
             };
 
             return (
-                <div className="min-h-screen flex flex-col">
-                    <Navbar />
-                    {!isReady && <div className="p-20 text-center text-2xl font-black">{statusMessage}</div>}
-                    
-                    <main className="flex-1 p-8 max-w-6xl mx-auto w-full grid lg:grid-cols-2 gap-8">
-                        <div className="space-y-6">
-                            <h1 className="text-6xl font-black italic text-primary">Novelty Index.</h1>
-                            <textarea 
-                                value={pitch} onChange={e => setPitch(e.target.value)}
-                                className="w-full bg-surface-dark p-4 rounded-xl border border-border-dark h-48 text-white"
-                                placeholder="Describe your idea..."
-                            />
-                            <button onClick={handleAnalyze} className="w-full bg-primary p-4 rounded-xl font-bold text-black">
-                                {isAnalyzing ? 'Analyzing...' : 'Run Analysis'}
-                            </button>
+                <div className="p-8 max-w-6xl mx-auto">
+                    <header className="mb-12">
+                        <h1 className="text-5xl font-black italic text-primary">Novelty Index.</h1>
+                        <p className="text-gray-400 mt-2">Local AI Analysis • GitHub Pages Ready</p>
+                    </header>
+
+                    {!isReady ? (
+                        <div className="h-64 flex items-center justify-center font-bold animate-pulse">Loading Brain...</div>
+                    ) : (
+                        <div className="grid lg:grid-cols-2 gap-12">
+                            <div className="space-y-6">
+                                <textarea 
+                                    className="w-full h-48 p-6 rounded-3xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-primary outline-none"
+                                    placeholder="Enter your startup pitch here..."
+                                    value={pitch}
+                                    onChange={(e) => setPitch(e.target.value)}
+                                />
+                                <button 
+                                    onClick={handleAnalyze}
+                                    disabled={isAnalyzing}
+                                    className="w-full py-4 rounded-2xl bg-[#0db9f2] text-black font-black text-xl hover:bg-white transition-colors"
+                                >
+                                    {isAnalyzing ? "Analyzing..." : "Analyze Pitch"}
+                                </button>
+                            </div>
+
+                            <div className="h-[400px] bg-slate-900 rounded-[2rem] border border-slate-700 relative overflow-hidden">
+                                {isAnalyzing && <div className="scanning-line"></div>}
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ScatterChart margin={{ top: 40, right: 40, bottom: 40, left: 40 }}>
+                                        <XAxis type="number" dataKey="x" hide domain={[-20, 20]} />
+                                        <YAxis type="number" dataKey="y" hide domain={[-20, 20]} />
+                                        <ZAxis type="number" range={[100, 400]} />
+                                        <Scatter data={points} shape="circle">
+                                            {points.map((entry, index) => (
+                                                <Cell 
+                                                    key={`cell-${index}`} 
+                                                    fill={entry.isUser ? '#0db9f2' : '#223f49'} 
+                                                    className={entry.isUser ? 'animate-bounce' : ''}
+                                                />
+                                            ))}
+                                        </Scatter>
+                                    </ScatterChart>
+                                </ResponsiveContainer>
+                            </div>
                         </div>
-                        
-                        <div className="relative">
-                            {isAnalyzing && <div className="scanning-line"></div>}
-                            <SimilarityMap ref={mapContainerRef} userPoint={result} corpusPoints={corpusPoints} />
-                            {result && (
-                                <div className="mt-4 p-6 bg-surface-dark border border-primary/30 rounded-2xl">
-                                    <h2 className="text-xl font-bold">{result.assessmentTitle}</h2>
-                                    <p className="text-text-dim">Novelty: {result.noveltyScore}/10</p>
-                                </div>
-                            )}
-                        </div>
-                    </main>
+                    )}
                 </div>
             );
         };
