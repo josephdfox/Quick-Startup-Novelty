@@ -1,12 +1,9 @@
 
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Navbar from './components/Navbar';
 import SimilarityMap from './components/SimilarityMap';
 import { AnalysisResult, ScatterPoint } from './types';
 import { toPng } from 'html-to-image';
-// Import the Gemini service for professional assessment
-import { getDetailedAssessment } from './services/geminiService';
 
 // Database item structure
 interface DBItem {
@@ -68,8 +65,6 @@ const App: React.FC = () => {
       env.allowLocalModels = false;
       env.useBrowserCache = true;
       env.remoteHost = 'https://huggingface.co';
-      // Fix: remove remoteModelPath from env as it's not a valid property in @xenova/transformers
-      // env.remoteModelPath = 'models';
 
       extractorRef.current = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
         progress_callback: (data: any) => {
@@ -147,19 +142,31 @@ const App: React.FC = () => {
         }
       });
 
-      // Calculate base novelty score (1-10)
+      // Calculate novelty score (1-10) locally
       const novelty = Math.max(1, Math.min(10, Math.round((1 - maxSim) * 10)));
       
-      // Fix: Use the Gemini-powered detailed assessment for more professional insights
-      const assessment = await getDetailedAssessment(pitch, maxSim);
+      // Local Assessment logic
+      let title = "Standard Market Entry";
+      let description = "Your idea shows high alignment with current market trends. While familiar, this indicates a validated demand area.";
+
+      if (maxSim < 0.35) {
+        title = "Pioneering Innovation";
+        description = "This concept is semantically distinct from known patterns. You are exploring uncharted territory with significant white space potential.";
+      } else if (maxSim < 0.6) {
+        title = "Strategic Differentiation";
+        description = "Your pitch introduces unique elements into an established category. Good potential for a niche-leader strategy.";
+      } else if (maxSim > 0.85) {
+        title = "Hyper-Competitive Overlap";
+        description = "Very high similarity detected with existing solutions. Consider pivoting the core value proposition to avoid direct feature-parity competition.";
+      }
 
       setResult({
         x: userPos.x,
         y: userPos.y,
         noveltyScore: novelty,
         localSimilarityScore: maxSim,
-        assessmentTitle: assessment.title,
-        assessmentDescription: assessment.description
+        assessmentTitle: title,
+        assessmentDescription: description
       });
     } catch (error) {
       console.error("Analysis failed:", error);
