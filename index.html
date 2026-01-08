@@ -1,137 +1,266 @@
-<script type="module">
-    let registryItems = [];
-    let chart = null;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Startup Novelty Index</title>
 
-    const statusEl = document.getElementById('status');
-    const loadingEl = document.getElementById('loading');
-    const resultEl = document.getElementById('result');
-    const resultScoreEl = document.getElementById('result-score');
-    const btn = document.getElementById('analyze-btn');
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
 
-    async function loadPrecomputedData() {
-        try {
-            const response = await fetch('data_precomputed.csv');
-            if (!response.ok) throw new Error('Not found');
-            const text = await response.text();
-            const lines = text.trim().split('\n');
-            
-            // Skip header
-            const dataLines = lines.slice(1);
-            
-            registryItems = dataLines.map(line => {
-                const [text, x, y] = line.split(',').map(s => s.trim().replace(/^"/, '').replace(/"$/, ''));
-                return {
-                    text: text,
-                    x: parseFloat(x),
-                    y: parseFloat(y)
-                };
-            });
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet" />
 
-            statusEl.textContent = `Loaded ${registryItems.length.toLocaleString()} ideas`;
-        } catch (err) {
-            statusEl.textContent = 'Error loading data_precomputed.csv';
-            console.error(err);
-            return;
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            background-color: #101e22;
+            color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+        }
+        .scanning-line {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #0db9f2, transparent);
+            box-shadow: 0 0 15px #0db9f2;
+            animation: scan-line 3s linear infinite;
+            z-index: 10;
+        }
+        @keyframes scan-line {
+            0% { top: -10%; }
+            100% { top: 110%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="min-h-screen flex flex-col p-6 md:p-12">
+        <header class="max-w-6xl mx-auto w-full mb-12 flex justify-between items-center">
+            <h1 class="text-3xl font-black tracking-tighter text-white">
+                NOVELTY<span class="text-[#0db9f2]">.AI</span>
+            </h1>
+            <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500 bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">
+                Local Processing Enabled
+            </div>
+        </header>
+
+        <main class="max-w-6xl mx-auto w-full grid lg:grid-cols-12 gap-12">
+            <div class="lg:col-span-5 space-y-8">
+                <div class="space-y-2">
+                    <h2 class="text-5xl font-black text-white leading-tight">Map your vision.</h2>
+                    <p class="text-slate-400">
+                        Enter your idea below. It will be plotted against <strong>all 75,000+</strong> ideas from your dataset.<br/>
+                        Hover over any point to see the original startup description. Your idea appears as the <span class="text-[#0db9f2] font-bold">large glowing cyan dot</span>.
+                    </p>
+                </div>
+
+                <div class="bg-slate-800/40 p-1 rounded-[2rem] border border-slate-700/50 shadow-2xl">
+                    <textarea id="pitch" class="w-full h-64 p-6 bg-transparent text-white placeholder:text-slate-600 outline-none resize-none text-lg"
+                        placeholder="Describe your startup in a few sentences..."></textarea>
+                    <button id="analyze-btn" class="w-full py-5 rounded-[1.8rem] bg-[#0db9f2] text-[#101e22] font-black text-xl hover:bg-white transition-all disabled:opacity-50">
+                        Run Analysis
+                    </button>
+                </div>
+            </div>
+
+            <div class="lg:col-span-7 flex flex-col gap-6">
+                <div class="relative">
+                    <div class="h-[500px] bg-[#182d34] rounded-[3rem] border border-slate-700 overflow-hidden shadow-inner">
+                        <canvas id="scatter-chart"></canvas>
+                    </div>
+                    <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-[#182d34]/80">
+                        <div class="size-12 border-4 border-[#0db9f2] border-t-transparent rounded-full animate-spin"></div>
+                        <p id="status" class="font-bold text-slate-400">Loading data...</p>
+                    </div>
+                </div>
+
+                <div id="result" class="hidden p-8 bg-slate-800/50 border border-[#0db9f2]/30 rounded-[2rem]">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="text-2xl font-black text-white">Max Semantic Similarity (Placeholder)</h3>
+                            <p class="text-slate-400 mt-2">
+                                Current version uses pre-computed 2D layout for speed.<br/>
+                                <span class="text-sm">Similarity score is illustrative only.</span>
+                            </p>
+                        </div>
+                        <div class="text-right">
+                            <span id="result-score" class="text-4xl font-black text-[#0db9f2]"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script type="module">
+        let registryItems = [];
+        let chart = null;
+
+        const statusEl = document.getElementById('status');
+        const loadingEl = document.getElementById('loading');
+        const resultEl = document.getElementById('result');
+        const resultScoreEl = document.getElementById('result-score');
+
+        async function loadPrecomputedData() {
+            try {
+                const response = await fetch('data_precomputed.csv');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const text = await response.text();
+                const lines = text.trim().split('\n');
+                
+                // Skip header
+                const dataLines = lines.slice(1);
+                
+                registryItems = dataLines.map(line => {
+                    // Robust parsing: handle quoted text with commas
+                    const match = line.match(/^"([^"]*)",(-?\d+\.?\d*),(-?\d+\.?\d*)$/);
+                    if (match) {
+                        return {
+                            text: match[1].replace(/""/g, '"'),  // Unescape double quotes
+                            x: parseFloat(match[2]),
+                            y: parseFloat(match[3])
+                        };
+                    }
+                    // Fallback for unquoted
+                    const parts = line.split(',');
+                    const y = parseFloat(parts.pop());
+                    const x = parseFloat(parts.pop());
+                    const text = parts.join(',').replace(/^"(.*)"$/, '$1');
+                    return { text, x, y };
+                }).filter(item => !isNaN(item.x) && !isNaN(item.y));
+
+                if (statusEl) {
+                    statusEl.textContent = `Loaded ${registryItems.length.toLocaleString()} ideas`;
+                }
+            } catch (err) {
+                if (statusEl) {
+                    statusEl.textContent = 'Error loading data_precomputed.csv – check console';
+                }
+                console.error(err);
+                return;
+            }
+
+            initChart();
+            if (loadingEl) loadingEl.classList.add('hidden');
         }
 
-        initChart();
-        loadingEl.classList.add('hidden');
-    }
+        function initChart() {
+            const ctx = document.getElementById('scatter-chart').getContext('2d');
 
-    function initChart() {
-        const ctx = document.getElementById('scatter-chart').getContext('2d');
+            const registryData = registryItems.map(item => ({
+                x: item.x,
+                y: item.y,
+                text: item.text
+            }));
 
-        const registryData = registryItems.map(item => ({
-            x: item.x,
-            y: item.y,
-            text: item.text
-        }));
-
-        chart = new Chart(ctx, {
-            type: 'scatter',
-            data: {
-                datasets: [
-                    {
-                        label: 'Existing Ideas',
-                        data: registryData,
-                        backgroundColor: '#334b55',
-                        pointRadius: 5,
-                        pointHoverRadius: 9,
-                        pointHoverBackgroundColor: '#506b77'
-                    },
-                    {
-                        label: 'Your Idea',
-                        data: [],
-                        backgroundColor: '#0db9f2',
-                        pointRadius: 20,
-                        pointHoverRadius: 28,
-                        borderColor: '#0fffff',
-                        borderWidth: 4
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: '#182d34',
-                        titleColor: '#f1f5f9',
-                        bodyColor: '#f1f5f9',
-                        borderColor: '#0db9f2',
-                        borderWidth: 1,
-                        cornerRadius: 12,
-                        displayColors: false,
-                        callbacks: {
-                            title: () => '',
-                            label: context => {
-                                if (context.datasetIndex === 1) {
-                                    return 'Your Idea: ' + document.getElementById('pitch').value.trim();
+            chart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Existing Ideas',
+                            data: registryData,
+                            backgroundColor: '#334b55',
+                            pointRadius: 5,
+                            pointHoverRadius: 9,
+                            pointHoverBackgroundColor: '#506b77'
+                        },
+                        {
+                            label: 'Your Idea',
+                            data: [],
+                            backgroundColor: '#0db9f2',
+                            pointRadius: 20,
+                            pointHoverRadius: 28,
+                            borderColor: '#0fffff',
+                            borderWidth: 4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#182d34',
+                            titleColor: '#f1f5f9',
+                            bodyColor: '#f1f5f9',
+                            borderColor: '#0db9f2',
+                            borderWidth: 1,
+                            cornerRadius: 12,
+                            displayColors: false,
+                            callbacks: {
+                                title: () => '',
+                                label: context => {
+                                    if (context.datasetIndex === 1) {
+                                        const pitchEl = document.getElementById('pitch');
+                                        return 'Your Idea: ' + (pitchEl ? pitchEl.value.trim() : '');
+                                    }
+                                    return context.raw.text || 'Existing idea';
                                 }
-                                return context.raw.text || 'Existing idea';
                             }
                         }
+                    },
+                    scales: {
+                        x: { display: false, grid: { display: false } },
+                        y: { display: false, grid: { display: false } }
                     }
-                },
-                scales: {
-                    x: { display: false, grid: { display: false } },
-                    y: { display: false, grid: { display: false } }
                 }
+            });
+        }
+
+        function analyze() {
+            const pitchEl = document.getElementById('pitch');
+            if (!pitchEl) return;
+            const pitch = pitchEl.value.trim();
+            if (pitch.length < 10) {
+                alert('Please enter a longer description.');
+                return;
             }
+
+            const btn = document.getElementById('analyze-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Placing on map...';
+            }
+            if (resultEl) resultEl.classList.add('hidden');
+
+            // Placeholder placement (fast demo – real position would require runtime embedding)
+            const spread = 80;
+            const userX = (Math.random() - 0.5) * spread;
+            const userY = (Math.random() - 0.5) * spread;
+
+            const userPoint = { x: userX, y: userY, text: pitch };
+
+            chart.data.datasets[1].data = [userPoint];
+            chart.update();
+
+            // Illustrative similarity score
+            const score = (Math.random() * 0.4 + 0.3).toFixed(3);
+            if (resultScoreEl) resultScoreEl.textContent = score;
+            if (resultEl) resultEl.classList.remove('hidden');
+
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Run Analysis';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const btn = document.getElementById('analyze-btn');
+            if (btn) {
+                btn.addEventListener('click', analyze);
+            } else {
+                console.error('Button with id="analyze-btn" not found!');
+            }
+
+            loadPrecomputedData();
         });
-    }
-
-    // For novelty score, we fall back to placeholder since full embeddings aren't loaded
-    // (You can add approximate score later if desired)
-    async function analyze() {
-        const pitch = document.getElementById('pitch').value.trim();
-        if (pitch.length < 10) return alert('Please enter a longer description.');
-
-        btn.disabled = true;
-        btn.textContent = 'Placing on map...';
-        resultEl.classList.add('hidden');
-
-        // Very fast fake placement in center-ish for demo purposes
-        // Replace with real embedding if you want accurate position + score
-        const spread = 100;
-        const userX = (Math.random() - 0.5) * spread;
-        const userY = (Math.random() - 0.5) * spread;
-
-        const userPoint = { x: userX, y: userY, text: pitch };
-
-        chart.data.datasets[1].data = [userPoint];
-        chart.update();
-
-        // Placeholder score (replace later if you load full embeddings)
-        const score = (Math.random() * 0.4 + 0.3).toFixed(3); // 0.3–0.7 range
-        resultScoreEl.textContent = score;
-        resultEl.classList.remove('hidden');
-
-        btn.disabled = false;
-        btn.textContent = 'Run Analysis';
-    }
-
-    document.getElementById('analyze-btn').addEventListener('click', analyze);
-    loadPrecomputedData();
-</script>
+    </script>
+</body>
+</html>
