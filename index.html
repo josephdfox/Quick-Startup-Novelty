@@ -55,7 +55,7 @@
                     <h2 class="text-5xl font-black text-white leading-tight">Map your vision.</h2>
                     <p class="text-slate-400">
                         Enter your idea below. It will be embedded and plotted against your data.csv ideas.<br/>
-                        You'll get a real semantic similarity score (higher = more similar to existing ideas).
+                        You'll get a real max cosine similarity score (higher = more similar to existing ideas).
                     </p>
                 </div>
 
@@ -83,10 +83,10 @@
                 <div id="result" class="hidden p-8 bg-slate-800/50 border border-[#0db9f2]/30 rounded-[2rem]">
                     <div class="flex justify-between items-start">
                         <div>
-                            <h3 class="text-2xl font-black text-white">Semantic Similarity Score</h3>
+                            <h3 class="text-2xl font-black text-white">Max Semantic Similarity</h3>
                             <p class="text-slate-400 mt-2">
-                                Max cosine similarity to any existing idea in your dataset.<br/>
-                                <span class="text-sm">1.0 = identical · 0.0 = completely unrelated</span>
+                                Highest cosine similarity to any idea in your dataset.<br/>
+                                <span class="text-sm">1.0 = nearly identical · 0.0 = completely different</span>
                             </p>
                         </div>
                         <div class="text-right">
@@ -99,10 +99,23 @@
     </div>
 
     <script type="module">
-        import { pipeline, env, cosineSimilarity } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+
+        // Manual cosine similarity function (since it's not exported)
+        function cosineSimilarity(a, b) {
+            let dot = 0;
+            let normA = 0;
+            let normB = 0;
+            for (let i = 0; i < a.length; i++) {
+                dot += a[i] * b[i];
+                normA += a[i] * a[i];
+                normB += b[i] * b[i];
+            }
+            return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+        }
 
         let extractor = null;
-        let registryEmbeddings = []; // Will store {text, embedding} for similarity calc
+        let registryEmbeddings = [];
         let points = [];
         let chart = null;
         let REGISTRY_DATA = [];
@@ -137,7 +150,9 @@
                     "Uber for dog walking",
                     "Airbnb for boats",
                     "SaaS for freelance taxes",
-                    "Social network for collectors"
+                    "Social network for collectors",
+                    "AI coding assistant",
+                    "Drone delivery service"
                 ];
             }
         }
@@ -158,7 +173,7 @@
                     const out = await extractor(text, { pooling: 'mean', normalize: true });
                     const embedding = Array.from(out.data);
 
-                    // Simple 2D projection for visualization
+                    // 2D projection for visualization
                     const half = embedding.length / 2;
                     const x = embedding.slice(0, half).reduce((a, b) => a + b, 0) * 20;
                     const y = embedding.slice(half).reduce((a, b) => a + b, 0) * 20;
@@ -213,7 +228,7 @@
                 const out = await extractor(pitch, { pooling: 'mean', normalize: true });
                 const userEmbedding = Array.from(out.data);
 
-                // 2D projection for plot
+                // 2D projection
                 const half = userEmbedding.length / 2;
                 const userX = userEmbedding.slice(0, half).reduce((a, b) => a + b, 0) * 20;
                 const userY = userEmbedding.slice(half).reduce((a, b) => a + b, 0) * 20;
@@ -227,13 +242,12 @@
                     pointHoverRadius: 24
                 };
 
-                // Remove previous user point and add new one
                 points = points.filter(p => p.pointBackgroundColor !== '#0db9f2');
                 points.push(userPoint);
                 chart.data.datasets[0].data = points;
                 chart.update();
 
-                // Calculate real max cosine similarity to any registry idea
+                // Real cosine similarity calculation
                 let maxSimilarity = 0;
                 for (const { embedding } of registryEmbeddings) {
                     const sim = cosineSimilarity(userEmbedding, embedding);
@@ -241,7 +255,6 @@
                 }
 
                 const score = maxSimilarity.toFixed(3);
-
                 resultScoreEl.textContent = score;
                 resultEl.classList.remove('hidden');
             } catch (err) {
