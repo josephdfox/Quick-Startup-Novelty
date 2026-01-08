@@ -54,8 +54,8 @@
                 <div class="space-y-2">
                     <h2 class="text-5xl font-black text-white leading-tight">Map your vision.</h2>
                     <p class="text-slate-400">
-                        Enter your idea below. It will be embedded and plotted against your data.csv ideas.<br/>
-                        Your idea appears as a <span class="text-[#0db9f2] font-bold">large glowing cyan dot</span>.
+                        Enter your idea below. It will be plotted against all ideas from your <code>data.csv</code>.<br/>
+                        Hover over any point to see the original startup description.
                     </p>
                 </div>
 
@@ -114,9 +114,8 @@
         }
 
         let extractor = null;
-        let registryEmbeddings = [];
-        let registryPoints = [];  // All existing ideas (small dark dots)
-        let userPoint = null;     // Your idea (large glowing cyan dot)
+        let registryItems = [];  // Will store {text, embedding, x, y}
+        let userPoint = null;
         let chart = null;
         let REGISTRY_DATA = [];
 
@@ -130,27 +129,34 @@
         async function loadData() {
             try {
                 const response = await fetch('data.csv');
-                if (!response.ok) throw new Error('Not found');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} – make sure data.csv is in the same folder as index.html`);
+                }
                 const text = await response.text();
                 const lines = text.trim().split('\n');
                 
                 let startIdx = 0;
-                if (lines[0] && lines[0].match(/^(idea|startup|description|text|pitch)/i)) {
+                if (lines.length > 0 && lines[0].match(/^(idea|startup|description|text|pitch)/i)) {
                     startIdx = 1;
                 }
                 
                 REGISTRY_DATA = lines.slice(startIdx)
                     .map(l => l.trim())
-                    .filter(l => l.length > 3);
+                    .filter(l => l.length > 5);  // Slightly stricter to avoid empty lines
 
-                if (REGISTRY_DATA.length === 0) throw new Error('Empty');
+                if (REGISTRY_DATA.length === 0) {
+                    throw new Error('data.csv is empty or has no valid lines');
+                }
+
+                statusEl.textContent = `Loaded ${REGISTRY_DATA.length} ideas from data.csv`;
             } catch (err) {
-                statusEl.textContent = 'data.csv not found or empty – using sample data';
+                console.warn('Failed to load data.csv:', err);
+                statusEl.textContent = 'Warning: data.csv not found – using built-in sample data';
                 REGISTRY_DATA = [
                     "Uber for dog walking", "Airbnb for boats", "SaaS for freelance taxes",
-                    "Social network for collectors", "AI coding assistant", "Drone delivery service",
-                    "Subscription box for plants", "Virtual reality fitness app", "Blockchain voting platform",
-                    "Sustainable fashion marketplace", "On-demand mental health coaching", "Electric scooter sharing"
+                    "Social network for vintage car collectors", "AI coding assistant", "Drone delivery service",
+                    "Subscription box for rare plants", "Virtual reality fitness coaching", "Blockchain corporate voting",
+                    "Sustainable fashion marketplace", "On-demand mental health therapy", "Electric scooter sharing network"
                 ];
             }
         }
@@ -164,23 +170,21 @@
                 extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
 
                 statusEl.textContent = `Embedding ${REGISTRY_DATA.length} ideas...`;
-                registryEmbeddings = [];
-                registryPoints = [];
+                registryItems = [];
 
                 for (const text of REGISTRY_DATA) {
                     const out = await extractor(text, { pooling: 'mean', normalize: true });
                     const embedding = Array.from(out.data);
 
-                    // Better 2D projection: use first two dimensions directly (more meaningful spread)
+                    // Use first two dimensions for clearer visual clustering
                     const x = embedding[0] * 300;
                     const y = embedding[1] * 300;
 
-                    registryEmbeddings.push({ text, embedding });
-                    registryPoints.push({
-                        x, y,
-                        radius: 5,
-                        backgroundColor: '#334b55',
-                        hoverRadius: 7
+                    registryItems.push({
+                        text,
+                        embedding,
+                        x,
+                        y
                     });
                 }
 
@@ -194,24 +198,32 @@
 
         function initChart() {
             const ctx = document.getElementById('scatter-chart').getContext('2d');
+
+            // Prepare data for registry points
+            const registryData = registryItems.map(item => ({
+                x: item.x,
+                y: item.y,
+                text: item.text  // Custom property for tooltip
+            }));
+
             chart = new Chart(ctx, {
                 type: 'scatter',
                 data: {
                     datasets: [
                         {
                             label: 'Existing Ideas',
-                            data: registryPoints,
+                            data: registryData,
                             backgroundColor: '#334b55',
-                            pointRadius: 5,
-                            pointHoverRadius: 7
+                            pointRadius: 6,
+                            pointHoverRadius: 10,
+                            pointHoverBackgroundColor: '#506b77'
                         },
                         {
                             label: 'Your Idea',
-                            data: [],  // Will be filled when analyzing
+                            data: [],
                             backgroundColor: '#0db9f2',
-                            pointRadius: 18,
-                            pointHoverRadius: 24,
-                            pointStyle: 'circle',
+                            pointRadius: 20,
+                            pointHoverRadius: 28,
                             borderColor: '#0fffff',
                             borderWidth: 4
                         }
@@ -222,7 +234,26 @@
                     maintainAspectRatio: false,
                     plugins: {
                         legend: { display: false },
-                        tooltip: { enabled: false }
+                        tooltip: {
+                            enabled: true,
+                            backgroundColor: '#182d34',
+                            titleColor: '#f1f5f9',
+                            bodyColor: '#f1f5f9',
+                            borderColor: '#0db9f2',
+                            borderWidth: 1,
+                            cornerRadius: 12,
+                            displayColors: false,
+                            callbacks: {
+                                title: () => '',  // Hide default title
+                                label: function(context) {
+                                    if (context.datasetIndex === 1) {
+                                        return 'Your Idea: ' + document.getElementById('pitch').value.trim();
+                                    }
+                                    const text = context.raw.text;
+                                    return text ? text : 'Existing idea';
+                                }
+                            }
+                        }
                     },
                     scales: {
                         x: { display: false, grid: { display: false } },
@@ -251,23 +282,22 @@
                 const out = await extractor(pitch, { pooling: 'mean', normalize: true });
                 const userEmbedding = Array.from(out.data);
 
-                // Use first two dimensions for better visual clustering
                 const userX = userEmbedding[0] * 300;
                 const userY = userEmbedding[1] * 300;
 
                 userPoint = {
                     x: userX,
-                    y: userY
+                    y: userY,
+                    text: pitch  // For tooltip
                 };
 
-                // Update the "Your Idea" dataset
                 chart.data.datasets[1].data = [userPoint];
                 chart.update();
 
                 // Calculate max cosine similarity
                 let maxSimilarity = 0;
-                for (const { embedding } of registryEmbeddings) {
-                    const sim = cosineSimilarity(userEmbedding, embedding);
+                for (const item of registryItems) {
+                    const sim = cosineSimilarity(userEmbedding, item.embedding);
                     if (sim > maxSimilarity) maxSimilarity = sim;
                 }
 
