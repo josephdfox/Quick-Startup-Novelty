@@ -55,7 +55,7 @@
                     <h2 class="text-5xl font-black text-white leading-tight">Map your vision.</h2>
                     <p class="text-slate-400">
                         Enter your idea below. It will be embedded and plotted against your data.csv ideas.<br/>
-                        You'll get a real max cosine similarity score (higher = more similar to existing ideas).
+                        Your idea appears as a <span class="text-[#0db9f2] font-bold">large glowing cyan dot</span>.
                     </p>
                 </div>
 
@@ -101,7 +101,6 @@
     <script type="module">
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
 
-        // Manual cosine similarity function (since it's not exported)
         function cosineSimilarity(a, b) {
             let dot = 0;
             let normA = 0;
@@ -116,7 +115,8 @@
 
         let extractor = null;
         let registryEmbeddings = [];
-        let points = [];
+        let registryPoints = [];  // All existing ideas (small dark dots)
+        let userPoint = null;     // Your idea (large glowing cyan dot)
         let chart = null;
         let REGISTRY_DATA = [];
 
@@ -147,12 +147,10 @@
             } catch (err) {
                 statusEl.textContent = 'data.csv not found or empty – using sample data';
                 REGISTRY_DATA = [
-                    "Uber for dog walking",
-                    "Airbnb for boats",
-                    "SaaS for freelance taxes",
-                    "Social network for collectors",
-                    "AI coding assistant",
-                    "Drone delivery service"
+                    "Uber for dog walking", "Airbnb for boats", "SaaS for freelance taxes",
+                    "Social network for collectors", "AI coding assistant", "Drone delivery service",
+                    "Subscription box for plants", "Virtual reality fitness app", "Blockchain voting platform",
+                    "Sustainable fashion marketplace", "On-demand mental health coaching", "Electric scooter sharing"
                 ];
             }
         }
@@ -167,23 +165,22 @@
 
                 statusEl.textContent = `Embedding ${REGISTRY_DATA.length} ideas...`;
                 registryEmbeddings = [];
-                points = [];
+                registryPoints = [];
 
                 for (const text of REGISTRY_DATA) {
                     const out = await extractor(text, { pooling: 'mean', normalize: true });
                     const embedding = Array.from(out.data);
 
-                    // 2D projection for visualization
-                    const half = embedding.length / 2;
-                    const x = embedding.slice(0, half).reduce((a, b) => a + b, 0) * 20;
-                    const y = embedding.slice(half).reduce((a, b) => a + b, 0) * 20;
+                    // Better 2D projection: use first two dimensions directly (more meaningful spread)
+                    const x = embedding[0] * 300;
+                    const y = embedding[1] * 300;
 
                     registryEmbeddings.push({ text, embedding });
-                    points.push({
+                    registryPoints.push({
                         x, y,
-                        pointRadius: 8,
-                        pointBackgroundColor: '#223f49',
-                        pointHoverRadius: 12
+                        radius: 5,
+                        backgroundColor: '#334b55',
+                        hoverRadius: 7
                     });
                 }
 
@@ -199,14 +196,40 @@
             const ctx = document.getElementById('scatter-chart').getContext('2d');
             chart = new Chart(ctx, {
                 type: 'scatter',
-                data: { datasets: [{ data: points }] },
+                data: {
+                    datasets: [
+                        {
+                            label: 'Existing Ideas',
+                            data: registryPoints,
+                            backgroundColor: '#334b55',
+                            pointRadius: 5,
+                            pointHoverRadius: 7
+                        },
+                        {
+                            label: 'Your Idea',
+                            data: [],  // Will be filled when analyzing
+                            backgroundColor: '#0db9f2',
+                            pointRadius: 18,
+                            pointHoverRadius: 24,
+                            pointStyle: 'circle',
+                            borderColor: '#0fffff',
+                            borderWidth: 4
+                        }
+                    ]
+                },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    },
                     scales: {
                         x: { display: false, grid: { display: false } },
                         y: { display: false, grid: { display: false } }
+                    },
+                    animation: {
+                        duration: 800
                     }
                 }
             });
@@ -228,26 +251,20 @@
                 const out = await extractor(pitch, { pooling: 'mean', normalize: true });
                 const userEmbedding = Array.from(out.data);
 
-                // 2D projection
-                const half = userEmbedding.length / 2;
-                const userX = userEmbedding.slice(0, half).reduce((a, b) => a + b, 0) * 20;
-                const userY = userEmbedding.slice(half).reduce((a, b) => a + b, 0) * 20;
+                // Use first two dimensions for better visual clustering
+                const userX = userEmbedding[0] * 300;
+                const userY = userEmbedding[1] * 300;
 
-                const userPoint = {
-                    x: userX, y: userY,
-                    pointRadius: 20,
-                    pointBackgroundColor: '#0db9f2',
-                    pointBorderColor: '#0db9f2',
-                    pointBorderWidth: 4,
-                    pointHoverRadius: 24
+                userPoint = {
+                    x: userX,
+                    y: userY
                 };
 
-                points = points.filter(p => p.pointBackgroundColor !== '#0db9f2');
-                points.push(userPoint);
-                chart.data.datasets[0].data = points;
+                // Update the "Your Idea" dataset
+                chart.data.datasets[1].data = [userPoint];
                 chart.update();
 
-                // Real cosine similarity calculation
+                // Calculate max cosine similarity
                 let maxSimilarity = 0;
                 for (const { embedding } of registryEmbeddings) {
                     const sim = cosineSimilarity(userEmbedding, embedding);
