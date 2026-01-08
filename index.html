@@ -45,7 +45,7 @@
                 NOVELTY<span class="text-[#0db9f2]">.AI</span>
             </h1>
             <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500 bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">
-                Local Processing Enabled
+                100% Private • Runs in Your Browser
             </div>
         </header>
 
@@ -54,8 +54,8 @@
                 <div class="space-y-2">
                     <h2 class="text-5xl font-black text-white leading-tight">Map your vision.</h2>
                     <p class="text-slate-400">
-                        Enter your idea below. It will be plotted against <strong>all 75,000+</strong> ideas from your dataset.<br/>
-                        Hover over any point to see the original startup description. Your idea appears as the <span class="text-[#0db9f2] font-bold">large glowing cyan dot</span>.
+                        Your idea is embedded <strong>entirely on your device</strong> — nothing is sent to any server.<br/>
+                        It is plotted against 75,000+ pre-loaded startup ideas with a real semantic similarity score.
                     </p>
                 </div>
 
@@ -72,24 +72,25 @@
                 <div class="relative">
                     <div class="h-[500px] bg-[#182d34] rounded-[3rem] border border-slate-700 overflow-hidden shadow-inner">
                         <canvas id="scatter-chart"></canvas>
+                        <div id="scanning-line" class="scanning-line hidden"></div>
                     </div>
                     <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-[#182d34]/80">
                         <div class="size-12 border-4 border-[#0db9f2] border-t-transparent rounded-full animate-spin"></div>
-                        <p id="status" class="font-bold text-slate-400">Loading data...</p>
+                        <p id="status" class="font-bold text-slate-400">Loading model & data (first time: ~1–2 min)...</p>
                     </div>
                 </div>
 
                 <div id="result" class="hidden p-8 bg-slate-800/50 border border-[#0db9f2]/30 rounded-[2rem]">
                     <div class="flex justify-between items-start">
                         <div>
-                            <h3 class="text-2xl font-black text-white">Max Semantic Similarity (Placeholder)</h3>
+                            <h3 class="text-2xl font-black text-white">Max Semantic Similarity</h3>
                             <p class="text-slate-400 mt-2">
-                                Current version uses pre-computed 2D layout for speed.<br/>
-                                <span class="text-sm">Similarity score is illustrative only.</span>
+                                Highest cosine similarity to any existing idea.<br/>
+                                <span class="text-sm">1.0 = nearly identical · 0.0 = completely novel</span>
                             </p>
                         </div>
                         <div class="text-right">
-                            <span id="result-score" class="text-4xl font-black text-[#0db9f2]"></span>
+                            <span id="result-score" class="text-4xl font-black text-[#0db9f2]">–</span>
                         </div>
                     </div>
                 </div>
@@ -98,61 +99,88 @@
     </div>
 
     <script type="module">
-        let registryItems = [];
+        import { pipeline, env, cosineSimilarity } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+
+        // Use quantized version for faster loading (~30 MB instead of 90 MB)
+        const MODEL = 'Xenova/all-MiniLM-L6-v2';
+
+        let extractor = null;
+        let registryEmbeddings = [];  // Float32Array[]
+        let registryCoords = [];      // {x, y, text}
         let chart = null;
 
         const statusEl = document.getElementById('status');
         const loadingEl = document.getElementById('loading');
+        const scanningEl = document.getElementById('scanning-line');
         const resultEl = document.getElementById('result');
         const resultScoreEl = document.getElementById('result-score');
 
-        async function loadPrecomputedData() {
+        async function loadPrecomputed() {
             try {
-                const response = await fetch('data_precomputed.csv');
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const text = await response.text();
-                const lines = text.trim().split('\n');
-                
-                // Skip header
-                const dataLines = lines.slice(1);
-                
-                registryItems = dataLines.map(line => {
-                    // Robust parsing: handle quoted text with commas
+                // Load 2D coordinates and text
+                const coordResponse = await fetch('data_precomputed.csv');
+                if (!coordResponse.ok) throw new Error('data_precomputed.csv not found');
+                const coordText = await coordResponse.text();
+                const lines = coordText.trim().split('\n').slice(1); // skip header
+
+                registryCoords = [];
+                for (const line of lines) {
                     const match = line.match(/^"([^"]*)",(-?\d+\.?\d*),(-?\d+\.?\d*)$/);
                     if (match) {
-                        return {
-                            text: match[1].replace(/""/g, '"'),  // Unescape double quotes
+                        registryCoords.push({
+                            text: match[1].replace(/""/g, '"'),
                             x: parseFloat(match[2]),
                             y: parseFloat(match[3])
-                        };
+                        });
                     }
-                    // Fallback for unquoted
-                    const parts = line.split(',');
-                    const y = parseFloat(parts.pop());
-                    const x = parseFloat(parts.pop());
-                    const text = parts.join(',').replace(/^"(.*)"$/, '$1');
-                    return { text, x, y };
-                }).filter(item => !isNaN(item.x) && !isNaN(item.y));
+                }
 
-                if (statusEl) {
-                    statusEl.textContent = `Loaded ${registryItems.length.toLocaleString()} ideas`;
+                // Load compressed binary embeddings
+                const embResponse = await fetch('embeddings.bin.gz');
+                if (!embResponse.ok) throw new Error('embeddings.bin.gz not found');
+                const gzBlob = await embResponse.blob();
+                const ds = new DecompressionStream('gzip');
+                const decompressed = gzBlob.stream().pipeThrough(ds);
+                const arrayBuffer = await new Response(decompressed).arrayBuffer();
+                const embeddingsArray = new Float32Array(arrayBuffer);
+
+                const dim = 384;
+                if (embeddingsArray.length !== registryCoords.length * dim) {
+                    throw new Error('Embedding size mismatch');
                 }
+
+                registryEmbeddings = [];
+                for (let i = 0; i < registryCoords.length; i++) {
+                    registryEmbeddings.push(embeddingsArray.subarray(i * dim, (i + 1) * dim));
+                }
+
+                statusEl.textContent = `Loaded ${registryCoords.length.toLocaleString()} ideas`;
             } catch (err) {
-                if (statusEl) {
-                    statusEl.textContent = 'Error loading data_precomputed.csv – check console';
-                }
+                statusEl.textContent = 'Failed to load data – check file names';
                 console.error(err);
-                return;
+                return false;
             }
+            return true;
+        }
+
+        async function init() {
+            env.allowLocalModels = false;
+
+            statusEl.textContent = 'Downloading quantized AI model (~30 MB)...';
+            extractor = await pipeline('feature-extraction', MODEL, { quantized: true });
+
+            statusEl.textContent = 'Loading pre-computed embeddings (~40 MB compressed)...';
+            const success = await loadPrecomputed();
+            if (!success) return;
 
             initChart();
-            if (loadingEl) loadingEl.classList.add('hidden');
+            loadingEl.classList.add('hidden');
         }
 
         function initChart() {
             const ctx = document.getElementById('scatter-chart').getContext('2d');
 
-            const registryData = registryItems.map(item => ({
+            const registryData = registryCoords.map(item => ({
                 x: item.x,
                 y: item.y,
                 text: item.text
@@ -167,8 +195,7 @@
                             data: registryData,
                             backgroundColor: '#334b55',
                             pointRadius: 5,
-                            pointHoverRadius: 9,
-                            pointHoverBackgroundColor: '#506b77'
+                            pointHoverRadius: 9
                         },
                         {
                             label: 'Your Idea',
@@ -196,12 +223,11 @@
                             displayColors: false,
                             callbacks: {
                                 title: () => '',
-                                label: context => {
-                                    if (context.datasetIndex === 1) {
-                                        const pitchEl = document.getElementById('pitch');
-                                        return 'Your Idea: ' + (pitchEl ? pitchEl.value.trim() : '');
+                                label: ctx => {
+                                    if (ctx.datasetIndex === 1) {
+                                        return 'Your Idea: ' + document.getElementById('pitch').value.trim();
                                     }
-                                    return context.raw.text || 'Existing idea';
+                                    return ctx.raw.text || 'Existing idea';
                                 }
                             }
                         }
@@ -214,52 +240,67 @@
             });
         }
 
-        function analyze() {
-            const pitchEl = document.getElementById('pitch');
-            if (!pitchEl) return;
-            const pitch = pitchEl.value.trim();
+        async function analyze() {
+            const pitch = document.getElementById('pitch').value.trim();
             if (pitch.length < 10) {
                 alert('Please enter a longer description.');
                 return;
             }
 
             const btn = document.getElementById('analyze-btn');
-            if (btn) {
-                btn.disabled = true;
-                btn.textContent = 'Placing on map...';
+            btn.disabled = true;
+            btn.textContent = 'Embedding your idea...';
+            scanningEl.classList.remove('hidden');
+            resultEl.classList.add('hidden');
+
+            try {
+                const out = await extractor(pitch, { pooling: 'mean', normalize: true });
+                const userEmbedding = out.data;  // Already normalized Float32Array
+
+                // Find max similarity
+                let maxSim = 0;
+                for (const emb of registryEmbeddings) {
+                    const sim = cosineSimilarity(userEmbedding, emb);
+                    if (sim > maxSim) maxSim = sim;
+                }
+
+                // Approximate 2D position: weighted average of top 10 nearest
+                const similarities = registryEmbeddings.map(emb => cosineSimilarity(userEmbedding, emb));
+                const indices = similarities
+                    .map((sim, i) => ({ sim, i }))
+                    .sort((a, b) => b.sim - a.sim)
+                    .slice(0, 10);
+
+                let sumX = 0, sumY = 0, sumWeight = 0;
+                for (const { sim, i } of indices) {
+                    const weight = sim;
+                    sumX += registryCoords[i].x * weight;
+                    sumY += registryCoords[i].y * weight;
+                    sumWeight += weight;
+                }
+                const userX = sumWeight ? sumX / sumWeight : 0;
+                const userY = sumWeight ? sumY / sumWeight : 0;
+
+                const userPoint = { x: userX, y: userY, text: pitch };
+
+                chart.data.datasets[1].data = [userPoint];
+                chart.update();
+
+                resultScoreEl.textContent = maxSim.toFixed(3);
+                resultEl.classList.remove('hidden');
+            } catch (err) {
+                alert('Analysis failed');
+                console.error(err);
             }
-            if (resultEl) resultEl.classList.add('hidden');
 
-            // Placeholder placement (fast demo – real position would require runtime embedding)
-            const spread = 80;
-            const userX = (Math.random() - 0.5) * spread;
-            const userY = (Math.random() - 0.5) * spread;
-
-            const userPoint = { x: userX, y: userY, text: pitch };
-
-            chart.data.datasets[1].data = [userPoint];
-            chart.update();
-
-            // Illustrative similarity score
-            const score = (Math.random() * 0.4 + 0.3).toFixed(3);
-            if (resultScoreEl) resultScoreEl.textContent = score;
-            if (resultEl) resultEl.classList.remove('hidden');
-
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = 'Run Analysis';
-            }
+            btn.disabled = false;
+            btn.textContent = 'Run Analysis';
+            scanningEl.classList.add('hidden');
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            const btn = document.getElementById('analyze-btn');
-            if (btn) {
-                btn.addEventListener('click', analyze);
-            } else {
-                console.error('Button with id="analyze-btn" not found!');
-            }
-
-            loadPrecomputedData();
+            document.getElementById('analyze-btn').addEventListener('click', analyze);
+            init();
         });
     </script>
 </body>
