@@ -16,6 +16,9 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
+    <!-- PapaParse for robust CSV parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
     <style>
         body {
             background-color: #101e22;
@@ -74,6 +77,7 @@
                         <canvas id="scatter-chart"></canvas>
                         <div id="scanning-line" class="scanning-line hidden"></div>
                     </div>
+
                     <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-[#182d34]/80">
                         <div class="size-12 border-4 border-[#0db9f2] border-t-transparent rounded-full animate-spin"></div>
                         <p id="status" class="font-bold text-slate-400">Loading model & data (first time: ~1–2 min)...</p>
@@ -101,109 +105,130 @@
     <script type="module">
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
 
-        // Manual cosine similarity (since it's not exported)
+        // ────────────────────────────────────────────────
+        //  Config
+        // ────────────────────────────────────────────────
+        const MODEL           = 'Xenova/all-MiniLM-L6-v2';
+        const DATA_CSV        = 'data_precomputed.csv';
+        const EMBEDDINGS_GZ   = 'embeddings.bin.gz';
+        const EMB_DIM         = 384;
+        const TOP_N_PROJECTION = 5;
+
+        // ────────────────────────────────────────────────
+        //  Globals
+        // ────────────────────────────────────────────────
+        let extractor         = null;
+        let registryEmbeddings = [];   // Float32Array[]
+        let registryCoords    = [];     // {x, y, text}[]
+        let chart             = null;
+
+        const els = {
+            pitch:       document.getElementById('pitch'),
+            btn:         document.getElementById('analyze-btn'),
+            status:      document.getElementById('status'),
+            loading:     document.getElementById('loading'),
+            scanning:    document.getElementById('scanning-line'),
+            result:      document.getElementById('result'),
+            resultScore: document.getElementById('result-score'),
+            chartCanvas: document.getElementById('scatter-chart'),
+        };
+
+        // ────────────────────────────────────────────────
+        //  Utils
+        // ────────────────────────────────────────────────
         function cosineSimilarity(a, b) {
-            let dot = 0;
-            let normA = 0;
-            let normB = 0;
+            let dot = 0, normA = 0, normB = 0;
             for (let i = 0; i < a.length; i++) {
-                dot += a[i] * b[i];
-                normA += a[i] * a[i];
-                normB += b[i] * b[i];
+                const ai = a[i], bi = b[i];
+                dot   += ai * bi;
+                normA += ai * ai;
+                normB += bi * bi;
             }
-            return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+            const denom = Math.sqrt(normA) * Math.sqrt(normB);
+            return denom > 1e-8 ? dot / denom : 0;
         }
 
-        const MODEL = 'Xenova/all-MiniLM-L6-v2';
+        function setStatus(msg) {
+            els.status.textContent = msg;
+        }
 
-        let extractor = null;
-        let registryEmbeddings = [];  // Float32Array[]
-        let registryCoords = [];      // {x, y, text}
-        let chart = null;
-
-        const statusEl = document.getElementById('status');
-        const loadingEl = document.getElementById('loading');
-        const scanningEl = document.getElementById('scanning-line');
-        const resultEl = document.getElementById('result');
-        const resultScoreEl = document.getElementById('result-score');
-
+        // ────────────────────────────────────────────────
+        //  Load precomputed data
+        // ────────────────────────────────────────────────
         async function loadPrecomputed() {
             try {
-                // Load 2D coordinates and text
-                const coordResponse = await fetch('data_precomputed.csv');
-                if (!coordResponse.ok) throw new Error('data_precomputed.csv not found');
-                const coordText = await coordResponse.text();
-                const lines = coordText.trim().split('\n').slice(1);
+                setStatus('Loading idea coordinates...');
+                const coordResp = await fetch(DATA_CSV);
+                if (!coordResp.ok) throw new Error(`CSV: ${coordResp.status} ${coordResp.statusText}`);
 
-                registryCoords = [];
-                for (const line of lines) {
-                    const match = line.match(/^"([^"]*)",(-?\d+\.?\d*),(-?\d+\.?\d*)$/);
-                    if (match) {
-                        registryCoords.push({
-                            text: match[1].replace(/""/g, '"'),
-                            x: parseFloat(match[2]),
-                            y: parseFloat(match[3])
-                        });
-                    } else {
-                        // Fallback parsing
-                        const parts = line.split(',');
-                        const y = parseFloat(parts.pop());
-                        const x = parseFloat(parts.pop());
-                        const text = parts.join(',').replace(/^"(.*)"$/, '$1');
-                        registryCoords.push({ text, x, y });
-                    }
+                const text = await coordResp.text();
+                const parsed = Papa.parse(text, {
+                    header: true,
+                    skipEmptyLines: true,
+                    dynamicTyping: true,
+                    transformHeader: h => h.trim().toLowerCase(),
+                });
+
+                if (parsed.errors.length) {
+                    console.warn('CSV parse warnings:', parsed.errors);
                 }
 
-                // Load compressed binary embeddings
-                const embResponse = await fetch('embeddings.bin.gz');
-                if (!embResponse.ok) throw new Error('embeddings.bin.gz not found');
-                const gzBlob = await embResponse.blob();
-                const ds = new DecompressionStream('gzip');
-                const decompressed = gzBlob.stream().pipeThrough(ds);
-                const arrayBuffer = await new Response(decompressed).arrayBuffer();
-                const embeddingsArray = new Float32Array(arrayBuffer);
+                registryCoords = parsed.data
+                    .map(row => ({
+                        text: (row.text || row.idea || row.description || '').trim(),
+                        x:    Number(row.x ?? row.pc1 ?? row.lon ?? 0),
+                        y:    Number(row.y ?? row.pc2 ?? row.lat ?? 0),
+                    }))
+                    .filter(r => r.text && !isNaN(r.x) && !isNaN(r.y));
 
-                const dim = 384;
-                if (embeddingsArray.length !== registryCoords.length * dim) {
-                    throw new Error(`Size mismatch: ${embeddingsArray.length} vs ${registryCoords.length * dim}`);
+                if (registryCoords.length === 0) {
+                    throw new Error('No valid coordinates found in CSV');
+                }
+
+                setStatus(`Loaded ${registryCoords.length.toLocaleString()} ideas → embeddings...`);
+
+                const gzResp = await fetch(EMBEDDINGS_GZ);
+                if (!gzResp.ok) throw new Error(`Embeddings: ${gzResp.status} ${gzResp.statusText}`);
+
+                const decompressed = await gzResp.blob()
+                    .then(b => b.stream().pipeThrough(new DecompressionStream('gzip')))
+                    .then(s => new Response(s).arrayBuffer());
+
+                const f32 = new Float32Array(decompressed);
+                if (f32.length !== registryCoords.length * EMB_DIM) {
+                    throw new Error(`Size mismatch: got ${f32.length}, expected ${registryCoords.length * EMB_DIM}`);
                 }
 
                 registryEmbeddings = [];
                 for (let i = 0; i < registryCoords.length; i++) {
-                    registryEmbeddings.push(embeddingsArray.subarray(i * dim, (i + 1) * dim));
+                    registryEmbeddings.push(f32.subarray(i * EMB_DIM, (i + 1) * EMB_DIM));
                 }
 
-                statusEl.textContent = `Loaded ${registryCoords.length.toLocaleString()} ideas`;
+                return true;
             } catch (err) {
-                statusEl.textContent = 'Failed to load data – check console';
-                console.error(err);
+                setStatus('Failed to load data — check console');
+                console.error('Data load error:', err);
                 return false;
             }
-            return true;
         }
 
+        // ────────────────────────────────────────────────
+        //  Initialize model + chart
+        // ────────────────────────────────────────────────
         async function init() {
             env.allowLocalModels = false;
+            env.cacheDir = 'cache/'; // helps modern browsers cache better
 
-            statusEl.textContent = 'Downloading quantized AI model (~30 MB)...';
+            setStatus('Downloading quantized model (~30 MB)...');
             extractor = await pipeline('feature-extraction', MODEL, { quantized: true });
 
-            statusEl.textContent = 'Loading pre-computed embeddings (~40 MB compressed)...';
+            setStatus('Loading pre-computed embeddings (~40 MB compressed)...');
             const success = await loadPrecomputed();
             if (!success) return;
 
-            initChart();
-            loadingEl.classList.add('hidden');
-        }
-
-        function initChart() {
-            const ctx = document.getElementById('scatter-chart').getContext('2d');
-
-            const registryData = registryCoords.map(item => ({
-                x: item.x,
-                y: item.y,
-                text: item.text
-            }));
+            // Initialize chart
+            const ctx = els.chartCanvas.getContext('2d');
+            const points = registryCoords.map(c => ({ x: c.x, y: c.y, text: c.text }));
 
             chart = new Chart(ctx, {
                 type: 'scatter',
@@ -211,10 +236,10 @@
                     datasets: [
                         {
                             label: 'Existing Ideas',
-                            data: registryData,
+                            data: points,
                             backgroundColor: '#334b55',
                             pointRadius: 5,
-                            pointHoverRadius: 9
+                            pointHoverRadius: 9,
                         },
                         {
                             label: 'Your Idea',
@@ -223,9 +248,9 @@
                             pointRadius: 20,
                             pointHoverRadius: 28,
                             borderColor: '#0fffff',
-                            borderWidth: 4
-                        }
-                    ]
+                            borderWidth: 4,
+                        },
+                    ],
                 },
                 options: {
                     responsive: true,
@@ -244,83 +269,95 @@
                                 title: () => '',
                                 label: ctx => {
                                     if (ctx.datasetIndex === 1) {
-                                        return 'Your Idea: ' + document.getElementById('pitch').value.trim();
+                                        return 'Your Idea: ' + els.pitch.value.trim().slice(0, 80) + (els.pitch.value.length > 80 ? '...' : '');
                                     }
                                     return ctx.raw.text || 'Existing idea';
-                                }
-                            }
-                        }
+                                },
+                            },
+                        },
                     },
                     scales: {
                         x: { display: false, grid: { display: false } },
-                        y: { display: false, grid: { display: false } }
-                    }
-                }
+                        y: { display: false, grid: { display: false } },
+                    },
+                },
             });
+
+            els.loading.classList.add('hidden');
+            setStatus('Ready!');
         }
 
+        // ────────────────────────────────────────────────
+        //  Analyze idea
+        // ────────────────────────────────────────────────
         async function analyze() {
-            const pitch = document.getElementById('pitch').value.trim();
-            if (pitch.length < 10) {
-                alert('Please enter a longer description.');
+            const pitch = els.pitch.value.trim();
+            if (pitch.length < 15) {
+                alert('Please enter a longer description (15+ characters).');
                 return;
             }
 
-            const btn = document.getElementById('analyze-btn');
-            btn.disabled = true;
-            btn.textContent = 'Embedding your idea...';
-            scanningEl.classList.remove('hidden');
-            resultEl.classList.add('hidden');
+            els.btn.disabled = true;
+            els.btn.textContent = 'Analyzing...';
+            els.scanning.classList.remove('hidden');
+            els.result.classList.add('hidden');
 
             try {
+                setStatus('Embedding your idea...');
                 const out = await extractor(pitch, { pooling: 'mean', normalize: true });
-                const userEmbedding = out.data;  // Float32Array, already normalized
+                const userEmb = out.data; // Float32Array, normalized
 
-                // Find max similarity
-                let maxSim = 0;
-                for (const emb of registryEmbeddings) {
-                    const sim = cosineSimilarity(userEmbedding, emb);
+                setStatus('Comparing to 75k+ ideas...');
+                let maxSim = -1;
+                const similarities = new Array(registryEmbeddings.length);
+
+                for (let i = 0; i < registryEmbeddings.length; i++) {
+                    const sim = cosineSimilarity(userEmb, registryEmbeddings[i]);
+                    similarities[i] = sim;
                     if (sim > maxSim) maxSim = sim;
                 }
 
-                // Approximate 2D position: weighted average of top 10 nearest neighbors
-                const similarities = registryEmbeddings.map(emb => cosineSimilarity(userEmbedding, emb));
-                const topIndices = similarities
-                    .map((sim, i) => ({ sim, i }))
-                    .sort((a, b) => b.sim - a.sim)
-                    .slice(0, 10);
+                // Weighted position of top N neighbors
+                const top = similarities
+                    .map((s, i) => ({ s, i }))
+                    .sort((a, b) => b.s - a.s)
+                    .slice(0, TOP_N_PROJECTION);
 
-                let sumX = 0, sumY = 0, sumWeight = 0;
-                for (const { sim, i } of topIndices) {
-                    const weight = sim;
-                    sumX += registryCoords[i].x * weight;
-                    sumY += registryCoords[i].y * weight;
-                    sumWeight += weight;
+                let sx = 0, sy = 0, sw = 0;
+                for (const { s, i } of top) {
+                    const w = Math.max(s, 0.01);
+                    sx += registryCoords[i].x * w;
+                    sy += registryCoords[i].y * w;
+                    sw += w;
                 }
-                const userX = sumWeight > 0 ? sumX / sumWeight : 0;
-                const userY = sumWeight > 0 ? sumY / sumWeight : 0;
 
-                const userPoint = { x: userX, y: userY, text: pitch };
+                const ux = sw > 0 ? sx / sw : 0;
+                const uy = sw > 0 ? sy / sw : 0;
 
-                chart.data.datasets[1].data = [userPoint];
+                chart.data.datasets[1].data = [{ x: ux, y: uy, text: pitch }];
                 chart.update();
 
-                resultScoreEl.textContent = maxSim.toFixed(3);
-                resultEl.classList.remove('hidden');
+                els.resultScore.textContent = maxSim.toFixed(3);
+                els.result.classList.remove('hidden');
             } catch (err) {
-                alert('Analysis failed');
+                alert('Analysis failed — check console for details.');
                 console.error(err);
             }
 
-            btn.disabled = false;
-            btn.textContent = 'Run Analysis';
-            scanningEl.classList.add('hidden');
+            els.btn.disabled = false;
+            els.btn.textContent = 'Run Analysis';
+            els.scanning.classList.add('hidden');
         }
 
+        // ────────────────────────────────────────────────
+        //  Start
+        // ────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', () => {
-            const btn = document.getElementById('analyze-btn');
-            if (btn) btn.addEventListener('click', analyze);
-            init();
+            if (els.btn) els.btn.addEventListener('click', analyze);
+            init().catch(err => {
+                console.error('Initialization failed:', err);
+                setStatus('Initialization failed — see console');
+            });
         });
     </script>
 </body>
